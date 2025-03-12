@@ -73,12 +73,18 @@ class OpenAIVoiceAssistant {
             // If connected, send a game start notification
             if (this.isConnected) {
                 this.sendGameStateUpdate('game_started');
+                
+                // Start gameplay tips timer
+                this.startGameplayTipsTimer();
             }
         });
         
         document.addEventListener('game-ended', () => {
             console.log('Game ended');
             this.gameState.gameInProgress = false;
+            
+            // Stop gameplay tips timer
+            this.stopGameplayTipsTimer();
             
             // If connected, send a game end notification with final score
             if (this.isConnected) {
@@ -1074,38 +1080,111 @@ class OpenAIVoiceAssistant {
         }
         
         let updateMessage = '';
+        const playerScore = this.gameState.playerScore;
+        const aiScore = this.gameState.aiScore;
+        const scoreDifference = Math.abs(playerScore - aiScore);
+        const isClose = scoreDifference <= 2;
+        const playerLeading = playerScore > aiScore;
+        const aiLeading = aiScore > playerScore;
+        const consecutivePlayerScores = this.gameState.consecutivePlayerScores;
+        const consecutiveAiScores = this.gameState.consecutiveAiScores;
         
         switch (eventType) {
             case 'game_started':
-                updateMessage = "New game starting!";
+                const startMessages = [
+                    "New game starting!",
+                    "Game on! Ready to play?",
+                    "Let's see your skills!",
+                    "New match beginning!",
+                    "Show me your best shots!"
+                ];
+                updateMessage = startMessages[Math.floor(Math.random() * startMessages.length)];
                 break;
                 
             case 'game_ended':
-                if (this.gameState.playerScore > this.gameState.aiScore) {
-                    updateMessage = `Player won ${this.gameState.playerScore}-${this.gameState.aiScore}. Great match!`;
-                } else if (this.gameState.aiScore > this.gameState.playerScore) {
-                    updateMessage = `AI won ${this.gameState.aiScore}-${this.gameState.playerScore}. Better luck next time!`;
+                if (playerScore > aiScore) {
+                    if (scoreDifference > 5) {
+                        updateMessage = `Impressive win ${playerScore}-${aiScore}! Dominating performance!`;
+                    } else if (isClose) {
+                        updateMessage = `Tight match! Player wins ${playerScore}-${aiScore}. Great comeback!`;
+                    } else {
+                        updateMessage = `Player won ${playerScore}-${aiScore}. Well played!`;
+                    }
+                } else if (aiScore > playerScore) {
+                    if (scoreDifference > 5) {
+                        updateMessage = `AI won ${aiScore}-${playerScore}. Try changing your strategy!`;
+                    } else if (isClose) {
+                        updateMessage = `Close one! AI wins ${aiScore}-${playerScore}. Nearly had it!`;
+                    } else {
+                        updateMessage = `AI won ${aiScore}-${playerScore}. Better luck next time!`;
+                    }
                 } else {
-                    updateMessage = `Tie game ${this.gameState.playerScore}-${this.gameState.aiScore}. Well played!`;
+                    updateMessage = `Tie game ${playerScore}-${aiScore}. Perfectly matched!`;
                 }
                 break;
                 
             case 'player_scored':
-                const playerScoreMessages = [
-                    `Player scored! ${this.gameState.playerScore}-${this.gameState.aiScore}`,
-                    `Nice shot! Score: ${this.gameState.playerScore}-${this.gameState.aiScore}`,
-                    `Point to player. ${this.gameState.playerScore}-${this.gameState.aiScore}`
-                ];
-                updateMessage = playerScoreMessages[Math.floor(Math.random() * playerScoreMessages.length)];
+                // Different messages based on game context
+                if (consecutivePlayerScores >= 3) {
+                    const streakMessages = [
+                        `Hot streak! ${playerScore}-${aiScore}!`,
+                        `${consecutivePlayerScores} in a row! ${playerScore}-${aiScore}`,
+                        `Unstoppable! Score: ${playerScore}-${aiScore}`,
+                        `On fire! ${playerScore}-${aiScore}`
+                    ];
+                    updateMessage = streakMessages[Math.floor(Math.random() * streakMessages.length)];
+                } else if (playerScore == 1 && aiScore == 0) {
+                    updateMessage = `First point! ${playerScore}-${aiScore}`;
+                } else if (aiLeading) {
+                    const comebackMessages = [
+                        `Catching up! ${playerScore}-${aiScore}`,
+                        `Good shot! Still ${playerScore}-${aiScore}`,
+                        `That's it! Now ${playerScore}-${aiScore}`,
+                        `Making progress! ${playerScore}-${aiScore}`
+                    ];
+                    updateMessage = comebackMessages[Math.floor(Math.random() * comebackMessages.length)];
+                } else {
+                    const standardMessages = [
+                        `Player scored! ${playerScore}-${aiScore}`,
+                        `Nice shot! Score: ${playerScore}-${aiScore}`,
+                        `Point to player. ${playerScore}-${aiScore}`,
+                        `Well placed! ${playerScore}-${aiScore}`,
+                        `Good angle! ${playerScore}-${aiScore}`
+                    ];
+                    updateMessage = standardMessages[Math.floor(Math.random() * standardMessages.length)];
+                }
                 break;
                 
             case 'ai_scored':
-                const aiScoreMessages = [
-                    `AI scored. ${this.gameState.playerScore}-${this.gameState.aiScore}`,
-                    `Point to AI. ${this.gameState.playerScore}-${this.gameState.aiScore}`,
-                    `AI gets one! ${this.gameState.playerScore}-${this.gameState.aiScore}`
-                ];
-                updateMessage = aiScoreMessages[Math.floor(Math.random() * aiScoreMessages.length)];
+                // Different messages based on game context
+                if (consecutiveAiScores >= 3) {
+                    const aiStreakMessages = [
+                        `AI's on a run! ${playerScore}-${aiScore}`,
+                        `Careful! ${consecutiveAiScores} straight for AI. ${playerScore}-${aiScore}`,
+                        `Change tactics! ${playerScore}-${aiScore}`,
+                        `Focus! AI streak. ${playerScore}-${aiScore}`
+                    ];
+                    updateMessage = aiStreakMessages[Math.floor(Math.random() * aiStreakMessages.length)];
+                } else if (playerScore == 0 && aiScore == 1) {
+                    updateMessage = `AI scores first. ${playerScore}-${aiScore}`;
+                } else if (playerLeading) {
+                    const aiCatchupMessages = [
+                        `AI scores. Still leading ${playerScore}-${aiScore}`,
+                        `Stay focused! ${playerScore}-${aiScore}`,
+                        `AI point. Still ahead ${playerScore}-${aiScore}`,
+                        `Keep your lead! ${playerScore}-${aiScore}`
+                    ];
+                    updateMessage = aiCatchupMessages[Math.floor(Math.random() * aiCatchupMessages.length)];
+                } else {
+                    const standardAiMessages = [
+                        `AI scored. ${playerScore}-${aiScore}`,
+                        `Point to AI. ${playerScore}-${aiScore}`,
+                        `AI gets one! ${playerScore}-${aiScore}`,
+                        `AI point. ${playerScore}-${aiScore}`,
+                        `Tricky shot! ${playerScore}-${aiScore}`
+                    ];
+                    updateMessage = standardAiMessages[Math.floor(Math.random() * standardAiMessages.length)];
+                }
                 break;
                 
             default:
@@ -1162,21 +1241,47 @@ class OpenAIVoiceAssistant {
             ? `${this.gameState.playerScore}-${this.gameState.aiScore}` 
             : 'No game';
         
-        // Custom instructions about the VR Pong game - slightly more conversational
+        // Determine if player is winning, losing or tied
+        let gameStatus = '';
+        if (this.gameState.gameInProgress) {
+            if (this.gameState.playerScore > this.gameState.aiScore) {
+                gameStatus = 'Player leading';
+            } else if (this.gameState.playerScore < this.gameState.aiScore) {
+                gameStatus = 'AI leading';
+            } else {
+                gameStatus = 'Tied game';
+            }
+        }
+        
+        // Custom instructions about the VR Pong game - with more commentary and tips
         const gameInstructions = `
-            You are a VR Pong game assistant. Be brief but personable.
+            You are a VR Pong game assistant and commentator. Be brief but engaging.
             
             GUIDELINES:
-            - Use 3-5 words for most responses
+            - Use 3-7 words for most responses
             - You can occasionally use short phrases
             - Be encouraging and supportive
             - Use light humor when appropriate
             - You can use minimal punctuation
-            - Focus on gameplay tips, reactions to points scored, and motivation
-            - Keep responses quick and easy to read during fast gameplay
-            - Avoid complex sentences or lengthy explanations
+            - Be enthusiastic like a sports commentator
+            
+            GAMEPLAY COMMENTARY:
+            - When player scores: congratulate and praise technique
+            - When AI scores: offer a quick tip or encouragement
+            - When player is behind: suggest specific strategies (angle shots, positioning)
+            - When player is ahead: compliment their skill
+            - Mention rally length for exciting exchanges
+            - React to close saves or near misses
+            - Occasionally comment on paddle technique
+            
+            SPECIFIC TIPS TO INCLUDE:
+            - Suggest aiming for corners
+            - Remind about wrist angle affecting ball direction
+            - Advise on timing and paddle position
+            - Encourage different serving techniques
             
             Current score: ${currentScore}
+            Game status: ${gameStatus}
         `;
         
         try {
@@ -1217,8 +1322,12 @@ class OpenAIVoiceAssistant {
             const payload = JSON.stringify({
                 type: 'conversation.item.create',
                 item: {
-                    type: 'input_text', // User messages always use 'input_text' type
-                    text: message
+                    type: 'message',
+                    role: 'user',
+                    content: [{
+                        type: 'input_text', // User messages always use 'input_text' type
+                        text: message
+                    }]
                 }
             });
             
@@ -1252,6 +1361,143 @@ class OpenAIVoiceAssistant {
             }
             
             return false;
+        }
+    }
+    
+    // Add this new method to periodically send gameplay tips
+    startGameplayTipsTimer() {
+        // Clear any existing timer
+        this.stopGameplayTipsTimer();
+        
+        // Send gameplay tips every 30-60 seconds, with variation based on game state
+        this.tipsTimer = setInterval(() => {
+            if (!this.isConnected || !this.gameState.gameInProgress) {
+                this.stopGameplayTipsTimer();
+                return;
+            }
+            
+            // Only send tips if the game has been going for a while
+            const gameTime = Date.now() - this.gameState.gameStartTime;
+            if (gameTime < 15000) { // Don't send tips in the first 15 seconds
+                return;
+            }
+            
+            // Check if we should send a tip based on game state
+            const playerScore = this.gameState.playerScore;
+            const aiScore = this.gameState.aiScore;
+            const scoreDifference = Math.abs(playerScore - aiScore);
+            const playerLeading = playerScore > aiScore;
+            const aiLeading = aiScore > playerScore;
+            
+            // Higher chance of tips when player is behind
+            let shouldSendTip = Math.random() < 0.7; // 70% chance normally
+            
+            if (aiLeading && scoreDifference >= 3) {
+                shouldSendTip = Math.random() < 0.9; // 90% chance when player is far behind
+            } else if (playerLeading && scoreDifference >= 3) {
+                shouldSendTip = Math.random() < 0.5; // 50% chance when player is far ahead
+            }
+            
+            if (shouldSendTip) {
+                this.sendGameplayTip();
+            }
+            
+        }, 30000); // Check every 30 seconds
+    }
+    
+    stopGameplayTipsTimer() {
+        if (this.tipsTimer) {
+            clearInterval(this.tipsTimer);
+            this.tipsTimer = null;
+        }
+    }
+    
+    sendGameplayTip() {
+        if (!this.isConnected || !this.dataChannel || this.dataChannel.readyState !== 'open') {
+            return;
+        }
+        
+        const playerScore = this.gameState.playerScore;
+        const aiScore = this.gameState.aiScore;
+        const playerLeading = playerScore > aiScore;
+        const aiLeading = aiScore > playerScore;
+        
+        let tipMessage = '';
+        
+        // Different tips based on game state
+        if (aiLeading) {
+            // Tips for when player is behind
+            const comebackTips = [
+                "Try angling your shots",
+                "Aim for the corners",
+                "Vary your serve speed",
+                "Watch your paddle angle",
+                "Stay centered more",
+                "Mix up your strategy",
+                "Observe AI patterns",
+                "Quick wrist flicks help",
+                "Anticipate return angles"
+            ];
+            tipMessage = comebackTips[Math.floor(Math.random() * comebackTips.length)];
+        } else if (playerLeading) {
+            // Tips for when player is ahead
+            const maintainLeadTips = [
+                "Keep up the good work",
+                "Stay focused",
+                "Don't get overconfident",
+                "Maintain your rhythm",
+                "Keep your positioning",
+                "Your technique is working",
+                "Stay with your strategy"
+            ];
+            tipMessage = maintainLeadTips[Math.floor(Math.random() * maintainLeadTips.length)];
+        } else {
+            // General tips for tie game
+            const generalTips = [
+                "Control paddle angle carefully",
+                "Stay balanced and ready",
+                "Watch ball trajectory",
+                "Conserve energy between points",
+                "Try unexpected angles",
+                "Patience wins points",
+                "Position before power"
+            ];
+            tipMessage = generalTips[Math.floor(Math.random() * generalTips.length)];
+        }
+        
+        try {
+            // Update UI
+            this.updateStatus(`Gameplay tip: ${tipMessage}`);
+            this.addMessage('system', tipMessage);
+            
+            // Format message according to OpenAI's WebRTC API requirements
+            const payload = JSON.stringify({
+                type: 'conversation.item.create',
+                item: {
+                    type: 'message',
+                    role: 'system',
+                    content: [{
+                        type: 'input_text', // System messages must use 'input_text' type
+                        text: tipMessage
+                    }]
+                }
+            });
+            
+            // Send the tip via the data channel
+            this.sendDataChannelMessage(payload);
+            console.log(`Gameplay tip sent: ${tipMessage}`);
+            
+            // Request a response 
+            const responsePayload = JSON.stringify({
+                type: 'response.create'
+            });
+            
+            setTimeout(() => {
+                this.sendDataChannelMessage(responsePayload);
+            }, 500);
+            
+        } catch (error) {
+            console.error('Error sending gameplay tip:', error);
         }
     }
 }
