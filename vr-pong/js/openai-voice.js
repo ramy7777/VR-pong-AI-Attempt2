@@ -20,6 +20,17 @@ class OpenAIVoiceAssistant {
         this.remoteAudioElement = null;
         this.transcript = '';
         
+        // Game state tracking
+        this.gameState = {
+            playerScore: 0,
+            aiScore: 0,
+            gameInProgress: false,
+            lastScoreUpdate: Date.now(),
+            consecutivePlayerScores: 0,
+            consecutiveAiScores: 0,
+            gameStartTime: null
+        };
+        
         // UI elements
         this.connectButton = document.getElementById('connectOpenAI');
         this.voiceStatus = document.getElementById('voiceStatus');
@@ -40,6 +51,61 @@ class OpenAIVoiceAssistant {
         // Add event listeners for game events
         document.addEventListener('game-started', () => {
             console.log('Game started, OpenAI voice assistant is ' + (this.isConnected ? 'active' : 'inactive'));
+            this.gameState.gameInProgress = true;
+            this.gameState.gameStartTime = Date.now();
+            this.gameState.playerScore = 0;
+            this.gameState.aiScore = 0;
+            this.gameState.consecutivePlayerScores = 0;
+            this.gameState.consecutiveAiScores = 0;
+            
+            // If connected, send a game start notification
+            if (this.isConnected) {
+                this.sendGameStateUpdate('game_started');
+            }
+        });
+        
+        document.addEventListener('game-ended', () => {
+            console.log('Game ended');
+            this.gameState.gameInProgress = false;
+            
+            // If connected, send a game end notification with final score
+            if (this.isConnected) {
+                this.sendGameStateUpdate('game_ended');
+            }
+        });
+        
+        // Listen for score updates
+        document.addEventListener('score-update', (event) => {
+            if (event.detail) {
+                const oldPlayerScore = this.gameState.playerScore;
+                const oldAiScore = this.gameState.aiScore;
+                
+                this.gameState.playerScore = event.detail.playerScore || 0;
+                this.gameState.aiScore = event.detail.aiScore || 0;
+                
+                // Track consecutive scores
+                if (oldPlayerScore < this.gameState.playerScore) {
+                    this.gameState.consecutivePlayerScores++;
+                    this.gameState.consecutiveAiScores = 0;
+                    this.gameState.lastScoreUpdate = Date.now();
+                    
+                    // If connected, send a player score notification
+                    if (this.isConnected) {
+                        this.sendGameStateUpdate('player_scored');
+                    }
+                } else if (oldAiScore < this.gameState.aiScore) {
+                    this.gameState.consecutiveAiScores++;
+                    this.gameState.consecutivePlayerScores = 0;
+                    this.gameState.lastScoreUpdate = Date.now();
+                    
+                    // If connected, send an AI score notification
+                    if (this.isConnected) {
+                        this.sendGameStateUpdate('ai_scored');
+                    }
+                }
+                
+                console.log(`Score updated - Player: ${this.gameState.playerScore}, AI: ${this.gameState.aiScore}`);
+            }
         });
     }
     
@@ -616,7 +682,7 @@ class OpenAIVoiceAssistant {
                     type: 'message',
                     role: 'user',
                     content: [{
-                        type: 'text',
+                        type: 'input_text',
                         text: message
                     }]
                 }
@@ -721,7 +787,7 @@ class OpenAIVoiceAssistant {
                     type: 'message',
                     role: 'assistant',
                     content: [{
-                        type: 'text',
+                        type: 'input_text',
                         text: greetingMessage
                     }]
                 }
@@ -747,6 +813,92 @@ class OpenAIVoiceAssistant {
         }
     }
     
+    // Send real-time game state updates to OpenAI
+    sendGameStateUpdate(eventType) {
+        if (!this.isConnected || !this.dataChannel || this.dataChannel.readyState !== 'open') {
+            console.log('Cannot send game state update: not connected');
+            return;
+        }
+        
+        let updateMessage = '';
+        const scoreDifference = Math.abs(this.gameState.playerScore - this.gameState.aiScore);
+        const isPlayerWinning = this.gameState.playerScore > this.gameState.aiScore;
+        const isAiWinning = this.gameState.aiScore > this.gameState.playerScore;
+        const isTied = this.gameState.playerScore === this.gameState.aiScore;
+        
+        switch (eventType) {
+            case 'game_started':
+                updateMessage = "The game has started! Good luck and have fun!";
+                break;
+                
+            case 'game_ended':
+                if (isPlayerWinning) {
+                    updateMessage = `Game over! You won with a score of ${this.gameState.playerScore}-${this.gameState.aiScore}. Congratulations!`;
+                } else if (isAiWinning) {
+                    updateMessage = `Game over! The AI won with a score of ${this.gameState.aiScore}-${this.gameState.playerScore}. Better luck next time!`;
+                } else {
+                    updateMessage = `Game over! It's a tie with a score of ${this.gameState.playerScore}-${this.gameState.aiScore}.`;
+                }
+                break;
+                
+            case 'player_scored':
+                if (this.gameState.consecutivePlayerScores >= 3) {
+                    updateMessage = `Wow! You scored again! That's ${this.gameState.consecutivePlayerScores} points in a row! The score is now ${this.gameState.playerScore}-${this.gameState.aiScore}.`;
+                } else if (scoreDifference >= 5 && isPlayerWinning) {
+                    updateMessage = `You scored! You're dominating with a ${scoreDifference} point lead! The score is now ${this.gameState.playerScore}-${this.gameState.aiScore}.`;
+                } else {
+                    updateMessage = `You scored! The score is now ${this.gameState.playerScore}-${this.gameState.aiScore}.`;
+                }
+                break;
+                
+            case 'ai_scored':
+                if (this.gameState.consecutiveAiScores >= 3) {
+                    updateMessage = `The AI scored again! That's ${this.gameState.consecutiveAiScores} points in a row. The score is now ${this.gameState.playerScore}-${this.gameState.aiScore}.`;
+                } else if (scoreDifference >= 5 && isAiWinning) {
+                    updateMessage = `The AI scored. They're ahead by ${scoreDifference} points. The score is now ${this.gameState.playerScore}-${this.gameState.aiScore}.`;
+                } else {
+                    updateMessage = `The AI scored. The score is now ${this.gameState.playerScore}-${this.gameState.aiScore}.`;
+                }
+                break;
+                
+            case 'score_update':
+                updateMessage = `The current score is: You ${this.gameState.playerScore}, AI ${this.gameState.aiScore}.`;
+                break;
+                
+            default:
+                return; // Don't send anything for unknown event types
+        }
+        
+        // Format message according to OpenAI's WebRTC API requirements
+        const payload = JSON.stringify({
+            type: 'conversation.item.create',
+            item: {
+                type: 'message',
+                role: 'system',
+                content: [{
+                    type: 'input_text',
+                    text: updateMessage
+                }]
+            }
+        });
+        
+        this.dataChannel.send(payload);
+        console.log(`Game state update sent: ${eventType} - ${updateMessage}`);
+        
+        // Request a response for certain events
+        if (['game_ended', 'player_scored', 'ai_scored'].includes(eventType)) {
+            const responsePayload = JSON.stringify({
+                type: 'response.create'
+            });
+            
+            setTimeout(() => {
+                if (this.dataChannel && this.dataChannel.readyState === 'open') {
+                    this.dataChannel.send(responsePayload);
+                }
+            }, 500);
+        }
+    }
+    
     // Update session with custom instructions about the VR Pong game
     updateSessionInstructions() {
         if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
@@ -755,6 +907,11 @@ class OpenAIVoiceAssistant {
         }
         
         console.log('Updating session with VR Pong game instructions');
+        
+        // Include current game state in the instructions
+        const currentScore = this.gameState.gameInProgress 
+            ? `Current score: Player ${this.gameState.playerScore}, AI ${this.gameState.aiScore}.` 
+            : 'No game is currently in progress.';
         
         // Custom instructions about the VR Pong game
         const gameInstructions = `
@@ -779,9 +936,23 @@ class OpenAIVoiceAssistant {
             - Multiplayer Mode: Play against other players online
             - Tournament Mode: Compete in structured competitions
             
+            Current Game State:
+            ${currentScore}
+            
+            As a game commentator and assistant:
+            - Provide enthusiastic commentary about the game progress
+            - Offer encouragement when the player is behind
+            - Congratulate the player on good plays and scoring
+            - Provide tips for improvement when appropriate
+            - Keep track of the score and mention it in your responses
+            - Be concise in your responses during active gameplay
+            
             Focus exclusively on answering questions about the game, its rules, controls, strategies, and troubleshooting.
             Be enthusiastic and encouraging to players, especially beginners.
             If asked about topics unrelated to the VR Pong game, politely redirect the conversation back to the game.
+            
+            You will receive real-time updates about the game state through system messages.
+            When you receive these updates, acknowledge them naturally in your responses.
         `;
         
         // Send session update with custom instructions

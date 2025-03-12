@@ -1282,6 +1282,15 @@ export class Game {
                             // Emit score event for haptic feedback
                             this.emit('score', { side: 'ai' });
                             
+                            // Dispatch score update event for OpenAI voice assistant
+                            document.dispatchEvent(new CustomEvent('score-update', {
+                                detail: {
+                                    playerScore: this.playerScore,
+                                    aiScore: this.aiScore,
+                                    scorer: 'ai'
+                                }
+                            }));
+                            
                             // Sync scores in multiplayer mode
                             if (this.isMultiplayer && this.multiplayerManager && this.isLocalPlayer) {
                                 this.multiplayerManager.updateScore(this.playerScore, this.aiScore);
@@ -1303,6 +1312,15 @@ export class Game {
                             
                             // Emit score event for haptic feedback
                             this.emit('score', { side: 'player' });
+                            
+                            // Dispatch score update event for OpenAI voice assistant
+                            document.dispatchEvent(new CustomEvent('score-update', {
+                                detail: {
+                                    playerScore: this.playerScore,
+                                    aiScore: this.aiScore,
+                                    scorer: 'player'
+                                }
+                            }));
                             
                             // Sync scores in multiplayer mode
                             if (this.isMultiplayer && this.multiplayerManager && this.isLocalPlayer) {
@@ -1611,6 +1629,16 @@ export class Game {
         console.log("Game over - timer finished!");
         this.gameOver = true;
         
+        // Dispatch game ended event for OpenAI voice assistant
+        document.dispatchEvent(new CustomEvent('game-ended', {
+            detail: {
+                playerScore: this.playerScore,
+                aiScore: this.aiScore,
+                winner: this.playerScore > this.aiScore ? 'player' : (this.aiScore > this.playerScore ? 'ai' : 'tie'),
+                gameMode: this.isMultiplayer ? 'multiplayer' : 'singleplayer'
+            }
+        }));
+        
         // Stop the ball by resetting it and setting velocity to zero
         if (this.ball) {
             // Completely stop the ball from moving
@@ -1660,6 +1688,15 @@ export class Game {
         // Reset scores
         this.playerScore = 0;
         this.aiScore = 0;
+        
+        // Dispatch game started event for OpenAI voice assistant
+        document.dispatchEvent(new CustomEvent('game-started', {
+            detail: {
+                playerScore: this.playerScore,
+                aiScore: this.aiScore,
+                gameMode: this.isMultiplayer ? 'multiplayer' : 'singleplayer'
+            }
+        }));
         
         // Reset and start timer
         if (this.timer) {
