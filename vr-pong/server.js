@@ -102,6 +102,26 @@ const io = socketIo(server);
 io.on('connection', (socket) => {
     console.log(`User connected: ${socket.id}`);
     
+    // Voice chat signaling events
+    socket.on('voice-signal', (data) => {
+        console.log(`Voice signal from ${socket.id} to ${data.to}`);
+        if (data.to) {
+            socket.to(data.to).emit('voice-signal', {
+                from: socket.id,
+                signal: data.signal
+            });
+        }
+    });
+    
+    socket.on('voice-request', (data) => {
+        console.log(`Voice request from ${socket.id} to ${data.to}`);
+        if (data.to) {
+            socket.to(data.to).emit('voice-request', {
+                from: socket.id
+            });
+        }
+    });
+    
     // Host a new game
     socket.on('hostGame', () => {
         // Check if already hosting a game
@@ -127,6 +147,14 @@ io.on('connection', (socket) => {
                 ballPosition: { x: 0, y: 0.9, z: -1.0 },
                 hostPaddlePosition: { x: 0, y: 0.9, z: -0.1 },
                 guestPaddlePosition: { x: 0, y: 0.9, z: -1.9 },
+                paddlePositions: {
+                    0: { x: 0, y: 0.9, z: -0.1 },  // Near paddle
+                    1: { x: 0, y: 0.9, z: -1.9 }   // Far paddle
+                },
+                paddleOwnership: {
+                    0: null,  // Near paddle
+                    1: null   // Far paddle
+                },
                 hostScore: 0,
                 guestScore: 0,
                 isPlaying: false
@@ -193,13 +221,33 @@ io.on('connection', (socket) => {
     
     // Update paddle position
     socket.on('updatePaddlePosition', (data) => {
-        const { x, y, z, isHost } = data;
+        const { x, y, z, isHost, paddleIndex, ownerId } = data;
         const position = { x, y, z };
         
         // Find the room this socket is in
         const roomId = [...socket.rooms].find(room => room !== socket.id && gameRooms[room]);
         
         if (roomId && gameRooms[roomId]) {
+            // Store position based on paddle index or host/guest status
+            if (paddleIndex !== undefined) {
+                if (!gameRooms[roomId].gameData.paddlePositions) {
+                    gameRooms[roomId].gameData.paddlePositions = {
+                        0: { x: 0, y: 0.9, z: -0.1 },
+                        1: { x: 0, y: 0.9, z: -1.9 }
+                    };
+                }
+                gameRooms[roomId].gameData.paddlePositions[paddleIndex] = position;
+                
+                // Also update ownership if provided
+                if (ownerId && gameRooms[roomId].gameData.paddleOwnership) {
+                    gameRooms[roomId].gameData.paddleOwnership[paddleIndex] = {
+                        ownerId: ownerId,
+                        isHost: isHost
+                    };
+                }
+            }
+            
+            // Also maintain the legacy data structure
             if (isHost) {
                 gameRooms[roomId].gameData.hostPaddlePosition = position;
             } else {
@@ -209,6 +257,39 @@ io.on('connection', (socket) => {
             // Broadcast to other player in the room
             socket.to(roomId).emit('paddlePositionUpdated', {
                 x, y, z,
+                isHost,
+                paddleIndex,
+                ownerId
+            });
+        }
+    });
+    
+    // Handle paddle ownership claims
+    socket.on('updatePaddleOwnership', (data) => {
+        const { paddleIndex, ownerId, isHost } = data;
+        
+        // Find the room this socket is in
+        const roomId = [...socket.rooms].find(room => room !== socket.id && gameRooms[room]);
+        
+        if (roomId && gameRooms[roomId]) {
+            // Initialize paddleOwnership if it doesn't exist
+            if (!gameRooms[roomId].gameData.paddleOwnership) {
+                gameRooms[roomId].gameData.paddleOwnership = {
+                    0: null,
+                    1: null
+                };
+            }
+            
+            // Update ownership
+            gameRooms[roomId].gameData.paddleOwnership[paddleIndex] = {
+                ownerId: ownerId,
+                isHost: isHost
+            };
+            
+            // Broadcast to other player in the room
+            socket.to(roomId).emit('paddleOwnershipUpdated', {
+                paddleIndex,
+                ownerId,
                 isHost
             });
         }
@@ -275,6 +356,69 @@ io.on('connection', (socket) => {
         }
     });
     
+    // Restart game (after timer has finished)
+    socket.on('restartGame', (data) => {
+        const { roomId } = data;
+        console.log(`RESTART EVENT: Received restartGame event for room ${roomId} from socket ${socket.id}`);
+        
+        if (!roomId) {
+            console.error(`Missing roomId in restartGame event from socket ${socket.id}`);
+            socket.emit('errorMessage', { message: 'Room ID is required for restart' });
+            return;
+        }
+        
+        if (gameRooms[roomId]) {
+            // Only the host can restart the game
+            if (gameRooms[roomId].host !== socket.id) {
+                console.log(`Non-host ${socket.id} attempted to restart game in room ${roomId}`);
+                socket.emit('errorMessage', { message: 'Only the host can restart the game' });
+                return;
+            }
+            
+            console.log(`RESTART EVENT: Restarting game in room ${roomId} by host ${socket.id}`);
+            
+            // Reset game data
+            gameRooms[roomId].gameData.hostScore = 0;
+            gameRooms[roomId].gameData.guestScore = 0;
+            gameRooms[roomId].gameData.isPlaying = true;
+            
+            // Get room sockets for direct emission
+            const roomSockets = io.sockets.adapter.rooms.get(roomId);
+            if (roomSockets) {
+                console.log(`RESTART EVENT: Room ${roomId} has ${roomSockets.size} connected clients`);
+                
+                // Log all connected socket IDs in this room
+                console.log(`RESTART EVENT: Connected sockets in room ${roomId}:`, 
+                           Array.from(roomSockets).join(', '));
+            } else {
+                console.log(`RESTART EVENT: No sockets found in room ${roomId}`);
+            }
+            
+            // Try both methods of emitting to room
+            try {
+                // Method 1: Broadcast restart to all players in the room
+                console.log(`RESTART EVENT: Broadcasting gameRestarted event to room ${roomId} using io.to()`);
+                io.to(roomId).emit('gameRestarted', { forceReset: true });
+                
+                // Method 2: Also try socket.to() as a backup
+                console.log(`RESTART EVENT: Broadcasting gameRestarted event using socket.to()`);
+                socket.to(roomId).emit('gameRestarted', { forceReset: true });
+                
+                // Method 3: Direct emission to host socket (always works for the host at least)
+                console.log(`RESTART EVENT: Emitting gameRestarted directly to host socket ${socket.id}`);
+                socket.emit('gameRestarted', { forceReset: true });
+                
+                // Success log
+                console.log(`RESTART EVENT: Successfully broadcast gameRestarted event to room ${roomId}`);
+            } catch (error) {
+                console.error(`Error broadcasting restart event: ${error.message}`);
+            }
+        } else {
+            console.log(`Attempted to restart game in non-existent room ${roomId}`);
+            socket.emit('errorMessage', { message: 'Game room not found' });
+        }
+    });
+    
     // Handle collision events
     socket.on('collisionEvent', (data) => {
         const { roomId, type, position } = data;
@@ -290,14 +434,15 @@ io.on('connection', (socket) => {
     
     // Handle VR controller data
     socket.on('updateControllerData', (data) => {
-        const { roomId, isHost, leftController, rightController } = data;
+        const { roomId, isHost, leftController, rightController, head } = data;
         
         if (gameRooms[roomId]) {
             // Broadcast controller data to the other player in the room
             socket.to(roomId).emit('remoteControllerData', {
                 isHost,
                 leftController,
-                rightController
+                rightController,
+                head  // Include head data if available
             });
         }
     });

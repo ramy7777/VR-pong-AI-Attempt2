@@ -1,51 +1,155 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>VR Pong</title>
+    <title>Pong Master VR</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="A WebXR Pong game for Meta Quest">
+    <!-- Import Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Roboto:wght@400;700&display=swap" rel="stylesheet">
     <style>
-        body { margin: 0; background-color: #000; }
+        body { 
+            margin: 0; 
+            background: linear-gradient(135deg, #000033 0%, #000 100%);
+            color: white; 
+            font-family: 'Roboto', sans-serif;
+            overflow: hidden;
+        }
+        
         canvas { display: block; }
+        
+        .game-title {
+            position: absolute;
+            top: 40px;
+            left: 0;
+            right: 0;
+            text-align: center;
+            font-family: 'Orbitron', sans-serif;
+            font-weight: 900;
+            font-size: 64px;
+            color: white;
+            text-shadow: 0 0 10px #4d69ff, 0 0 20px rgba(77, 105, 255, 0.5);
+            letter-spacing: 2px;
+            z-index: 100;
+        }
+        
+        .game-subtitle {
+            position: absolute;
+            top: 160px;
+            left: 0;
+            right: 0;
+            text-align: center;
+            font-family: 'Orbitron', sans-serif;
+            font-weight: 400;
+            font-size: 18px;
+            color: #b3e5fc;
+            letter-spacing: 4px;
+            text-transform: uppercase;
+            z-index: 100;
+        }
+        
         .game-buttons {
             position: absolute;
-            top: 20px;
+            top: 230px;
             left: 0;
             right: 0;
             display: flex;
             justify-content: center;
-            gap: 20px;
+            gap: 30px;
+            z-index: 100;
         }
+        
+        .btn {
+            padding: 15px 35px;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 18px;
+            font-family: 'Orbitron', sans-serif;
+            font-weight: 700;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+            box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
+        }
+        
+        .btn:before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+            transition: all 0.5s ease;
+        }
+        
+        .btn:hover:before {
+            left: 100%;
+        }
+        
+        .btn:active {
+            transform: translateY(3px);
+            box-shadow: 0 3px 10px rgba(0, 0, 0, 0.2);
+        }
+        
         #startVR {
-            padding: 12px 24px;
-            background: #4CAF50;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 16px;
+            background: linear-gradient(to right, #4CAF50, #388E3C);
         }
+        
+        #startVR:hover {
+            background: linear-gradient(to right, #66BB6A, #43A047);
+        }
+        
         #startDesktop {
-            padding: 12px 24px;
-            background: #2196F3;
+            background: linear-gradient(to right, #2196F3, #1976D2);
+        }
+        
+        #startDesktop:hover {
+            background: linear-gradient(to right, #42A5F5, #1E88E5);
+        }
+        
+        #fallbackDesktop {
+            background: linear-gradient(to right, #2196F3, #1976D2);
+            padding: 15px 35px;
             color: white;
             border: none;
-            border-radius: 4px;
+            border-radius: 8px;
             cursor: pointer;
-            font-size: 16px;
+            font-size: 18px;
+            font-family: 'Orbitron', sans-serif;
+            font-weight: 700;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            transition: all 0.3s ease;
+            margin-top: 30px;
+            box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
         }
+        
+        #fallbackDesktop:hover {
+            background: linear-gradient(to right, #42A5F5, #1E88E5);
+        }
+        
+        #fallbackDesktop:active {
+            transform: translateY(3px);
+            box-shadow: 0 3px 10px rgba(0, 0, 0, 0.2);
+        }
+        
         #noVR {
             display: none;
             position: absolute;
-            top: 50%;
+            top: 65%;
             left: 50%;
             transform: translate(-50%, -50%);
             text-align: center;
-            color: white;
-            background: rgba(0, 0, 0, 0.8);
-            padding: 20px;
+            padding: 10px;
             border-radius: 8px;
         }
+        
         #errorMessage {
             display: none;
             position: absolute;
@@ -54,102 +158,212 @@
             transform: translateX(-50%);
             text-align: center;
             color: white;
-            background: rgba(255, 0, 0, 0.7);
-            padding: 10px 20px;
-            border-radius: 4px;
-            font-family: Arial, sans-serif;
+            background: rgba(229, 57, 53, 0.8);
+            padding: 15px 30px;
+            border-radius: 8px;
+            font-family: 'Roboto', sans-serif;
             max-width: 80%;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
         }
+        
         #loadingMessage {
             position: absolute;
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
             color: white;
-            font-size: 18px;
-            font-family: Arial, sans-serif;
-        }
-        #instructions {
-            position: absolute;
-            bottom: 20px;
-            left: 0;
-            right: 0;
+            font-size: 24px;
+            font-family: 'Orbitron', sans-serif;
             text-align: center;
-            color: white;
-            background: rgba(0, 0, 0, 0.7);
-            padding: 10px;
-            font-family: Arial, sans-serif;
+            letter-spacing: 2px;
         }
+        
+        /* Canvas background overlay for depth */
+        .background-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(circle at center, transparent 10%, rgba(0, 0, 0, 0.5) 100%);
+            pointer-events: none;
+            z-index: 1;
+        }
+        
         /* OpenAI Voice Assistant Styles */
-        #voiceStatus {
+        .openai-voice-container {
             position: absolute;
-            top: 70px;
-            left: 0;
-            right: 0;
-            text-align: center;
-            color: white;
-            font-family: Arial, sans-serif;
-        }
-        #openaiTranscript {
-            position: absolute;
-            bottom: 100px;
+            top: 220px;
             left: 50%;
             transform: translateX(-50%);
-            width: 80%;
-            max-height: 200px;
-            overflow-y: auto;
-            background: rgba(0, 0, 0, 0.7);
-            color: white;
-            padding: 10px;
-            border-radius: 5px;
-            font-family: Arial, sans-serif;
-            display: none;
+            width: 500px;
+            background: rgba(30, 30, 60, 0.85);
+            border-radius: 12px;
+            border: 2px solid rgba(77, 105, 255, 0.5);
+            padding: 20px;
+            box-shadow: 0 0 20px rgba(77, 105, 255, 0.3);
+            margin-bottom: 20px;
+            z-index: 100;
         }
-        #connectOpenAI {
-            position: absolute;
-            top: 20px;
-            right: 20px;
-            padding: 10px 15px;
-            background: #9C27B0;
+        
+        .openai-voice-header {
+            font-family: 'Orbitron', sans-serif;
+            font-weight: 700;
+            font-size: 24px;
+            color: #4d69ff;
+            text-align: center;
+            margin-bottom: 15px;
+            text-shadow: 0 0 5px rgba(77, 105, 255, 0.5);
+        }
+        
+        .openai-voice-content {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        
+        .openai-voice-status {
+            font-family: 'Roboto', sans-serif;
+            font-size: 16px;
+            color: #b3e5fc;
+            text-align: center;
+            margin-bottom: 15px;
+        }
+        
+        .openai-voice-note {
+            font-family: 'Roboto', sans-serif;
+            font-size: 14px;
+            color: #ffcc80;
+            text-align: center;
+            margin-bottom: 15px;
+        }
+        
+        .openai-voice-controls {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        
+        .openai-btn {
+            padding: 12px 25px;
+            background: linear-gradient(to right, #7e57c2, #5e35b1);
             color: white;
             border: none;
-            border-radius: 4px;
+            border-radius: 8px;
             cursor: pointer;
+            font-size: 16px;
+            font-family: 'Orbitron', sans-serif;
+            font-weight: 700;
+            letter-spacing: 1px;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+        }
+        
+        .openai-btn:hover {
+            background: linear-gradient(to right, #9575cd, #7e57c2);
+            transform: translateY(-2px);
+        }
+        
+        .openai-btn:active {
+            transform: translateY(1px);
+        }
+        
+        .voice-status {
+            font-family: 'Roboto', sans-serif;
             font-size: 14px;
+            color: #ffcc80;
+        }
+        
+        .openai-transcript {
+            width: 100%;
+            max-height: 80px;
+            overflow-y: auto;
+            background: rgba(20, 20, 40, 0.6);
+            border-radius: 6px;
+            padding: 10px;
+            font-family: 'Roboto', sans-serif;
+            font-size: 14px;
+            color: #e0e0e0;
+            margin-top: 10px;
+            display: none;
+        }
+        
+        .game-buttons {
+            position: absolute;
+            top: 530px;
+            left: 0;
+            right: 0;
+            display: flex;
+            justify-content: center;
+            gap: 30px;
+            z-index: 100;
         }
     </style>
     <!-- Include Socket.IO client library from CDN -->
     <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
+    <!-- Import simple-peer as a global variable -->
+    <script>
+        // Load SimplePeer script
+        function loadSimplePeer() {
+            return new Promise((resolve, reject) => {
+                const script = document.createElement('script');
+                script.src = 'https://cdn.jsdelivr.net/npm/simple-peer@9.11.1/simplepeer.min.js';
+                script.onload = () => {
+                    console.log('SimplePeer library loaded successfully');
+                    resolve();
+                };
+                script.onerror = () => {
+                    console.error('Failed to load SimplePeer library');
+                    reject(new Error('Failed to load SimplePeer library'));
+                };
+                document.head.appendChild(script);
+            });
+        }
+        
+        // Load the script when the page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            loadSimplePeer().catch(err => {
+                console.error('Error loading SimplePeer:', err);
+            });
+        });
+    </script>
 </head>
 <body>
+    <!-- Background overlay for depth -->
+    <div class="background-overlay"></div>
+    
+    <!-- Game title and subtitle -->
+    <h1 class="game-title">PONG MASTER VR</h1>
+    <div class="game-subtitle">Experience the classic game in virtual reality</div>
+    
+    <!-- OpenAI Voice Assistant UI -->
+    <div id="openai-voice-ui" class="openai-voice-container">
+        <div class="openai-voice-header">AI Voice Assistant</div>
+        <div class="openai-voice-content">
+            <div class="openai-voice-status">Connect to OpenAI voice assistant to enhance your gaming experience</div>
+            <div class="openai-voice-note">You'll need your own OpenAI API key with access to GPT-4o mini realtime</div>
+            <div class="openai-voice-controls">
+                <button id="connectOpenAI" class="openai-btn">Connect Voice Assistant</button>
+                <div id="voiceStatus" class="voice-status">Not connected</div>
+            </div>
+            <div id="openaiTranscript" class="openai-transcript"></div>
+        </div>
+    </div>
+    
     <div class="game-buttons">
-        <button id="startVR">Enter VR Mode</button>
-        <button id="startDesktop">Play in Browser</button>
+        <button id="startVR" class="btn">Enter VR Mode</button>
+        <button id="startDesktop" class="btn">Play in Browser</button>
     </div>
     
     <div id="noVR">
-        <h2>WebXR Not Available</h2>
-        <p>This game requires a WebXR-compatible device and browser.</p>
-        <p>Please use a Meta Quest or other VR headset.</p>
-        <p>Alternatively, you can play in desktop mode!</p>
-        <button id="fallbackDesktop" style="padding: 12px 24px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; margin-top: 15px;">Play in Desktop Mode</button>
+        <button id="fallbackDesktop">Play in Desktop Mode</button>
     </div>
     
     <div id="errorMessage"></div>
     <div id="loadingMessage">Loading game assets...</div>
     
-    <div id="instructions" style="display: none;">
-        <h3>Desktop Controls</h3>
-        <p>Use the Arrow Keys or A/D to move your paddle left and right</p>
-        <p>Press Space to start the game</p>
-        <p>Click and drag with the mouse to control the paddle</p>
-    </div>
-
-    <!-- OpenAI Voice Assistant UI -->
-    <button id="connectOpenAI">Connect Voice Assistant</button>
-    <div id="voiceStatus">Voice assistant not connected</div>
-    <div id="openaiTranscript"></div>
-
     <script type="importmap">
     {
         "imports": {
@@ -159,8 +373,11 @@
         }
     }
     </script>
-    <!-- Include OpenAI Voice Assistant Scripts -->
+    
+    <!-- Load OpenAI Voice Integration -->
     <script src="js/openai-voice.js"></script>
+    
+    <!-- Main game script -->
     <script type="module">
         import { Game } from './js/game/Game.js';
         let game;
@@ -178,26 +395,36 @@
             const startVRBtn = document.getElementById('startVR');
             const startDesktopBtn = document.getElementById('startDesktop');
             const fallbackDesktopBtn = document.getElementById('fallbackDesktop');
-            const instructions = document.getElementById('instructions');
+            
+            // Add loading animation
+            let dots = 0;
+            const loadingInterval = setInterval(() => {
+                dots = (dots + 1) % 4;
+                loadingMsg.textContent = `Loading game assets${'.'.repeat(dots)}`;
+            }, 500);
             
             // Function to start the game
             const startGame = (vrMode = false) => {
                 try {
                     // Hide buttons, show loading
                     document.querySelector('.game-buttons').style.display = 'none';
+                    document.querySelector('.game-title').style.display = 'none';
+                    document.querySelector('.game-subtitle').style.display = 'none';
+                    document.getElementById('openai-voice-ui').style.display = 'none';
                     loadingMsg.style.display = 'block';
                     
                     // Initialize the game
-                    game = new Game();
+                    game = new Game(document.body);
                     
-                    // If desktop mode, show instructions
-                    if (!vrMode) {
-                        instructions.style.display = 'block';
-                    }
+                    // Create a game-started event for other components to listen to
+                    const gameStartedEvent = new Event('game-started');
+                    document.dispatchEvent(gameStartedEvent);
                     
                     loadingMsg.style.display = 'none';
+                    clearInterval(loadingInterval);
                 } catch (error) {
                     loadingMsg.style.display = 'none';
+                    clearInterval(loadingInterval);
                     const errorMsg = document.getElementById('errorMessage');
                     errorMsg.textContent = `Failed to initialize game: ${error.message}`;
                     errorMsg.style.display = 'block';
