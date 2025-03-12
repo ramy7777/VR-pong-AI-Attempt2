@@ -3,58 +3,12 @@ const https = require('https');
 const path = require('path');
 const selfsigned = require('selfsigned');
 const socketIo = require('socket.io');
-const axios = require('axios'); // We'll use axios for OpenAI API requests
 
 // Game rooms storage
 const gameRooms = {};
 
 const app = express();
-
-// Serve JS files with the correct MIME type for ES modules
-app.use((req, res, next) => {
-    if (req.path.endsWith('.js')) {
-        // Explicitly set the correct MIME type for JavaScript modules
-        res.set('Content-Type', 'application/javascript');
-    } else if (req.path.endsWith('.mjs')) {
-        // Handle ES module files explicitly
-        res.set('Content-Type', 'application/javascript');
-    }
-    next();
-});
-
 app.use(express.static('./'));
-app.use(express.json()); // For parsing application/json
-
-// OpenAI API proxy route to avoid exposing API keys in client
-app.post('/api/openai-proxy', async (req, res) => {
-    try {
-        const { endpoint, data, apiKey } = req.body;
-        
-        if (!apiKey) {
-            return res.status(400).json({ error: 'API key is required' });
-        }
-        
-        // For models endpoint, use GET method instead of POST
-        const method = endpoint === 'models' ? 'get' : 'post';
-        
-        const response = await axios({
-            method: method,
-            url: `https://api.openai.com/v1/${endpoint}`,
-            headers: {
-                'Authorization': `Bearer ${apiKey}`,
-                'Content-Type': 'application/json'
-            },
-            data: method === 'post' ? data : undefined
-        });
-        
-        res.json(response.data);
-    } catch (error) {
-        console.error('OpenAI API error:', error.response?.data || error.message);
-        res.status(error.response?.status || 500).json({
-            error: error.response?.data?.error?.message || 'Error connecting to OpenAI API'
-        });
-    }
-});
 
 // Handle all routes by serving index.html
 app.get('*', (req, res) => {

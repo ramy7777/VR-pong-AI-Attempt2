@@ -9,8 +9,14 @@ import { SoundManager } from '../audio/SoundManager.js';
 import { StartButton } from '../ui/StartButton.js';
 import { ScoreDisplay } from '../ui/ScoreDisplay.js';
 import { Timer } from '../ui/Timer.js';
+import { TimerDisplay } from '../ui/TimerDisplay.js';
 import { MultiplayerMenu } from '../ui/MultiplayerMenu.js';
 import { MultiplayerManager } from '../network/MultiplayerManager.js';
+import { RestartButton } from '../ui/RestartButton.js';
+import { FinalScoreDisplay } from '../ui/FinalScoreDisplay.js';
+import { HeadModel } from '../player/HeadModel.js';
+import { HandModel } from '../player/HandModel.js';
+import { MobileController } from '../controllers/MobileController.js';
 
 export class Game {
     constructor() {
@@ -19,56 +25,80 @@ export class Game {
         this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
         this.renderer = new THREE.WebGLRenderer({ antialias: true });
         this.renderer.shadowMap.enabled = true;
-        
-        // Game state
-        this.isGameStarted = false;
-        this.isMultiplayer = false;
-        this.isLocalPlayer = true; // Player is host by default
-        this.isInVR = false; // Track if user is in VR
-        
-        // Button interaction state tracking
-        this.lastButtonPressController = null;
-        this.lastButtonPressTime = 0;
-        
-        // Scoring
-        this.playerScore = 0;
-        this.aiScore = 0;
-        
-        // Clock for animation
+        this.renderer.setSize(window.innerWidth, window.innerHeight);
+        this.renderer.xr.enabled = true;
+        document.body.appendChild(this.renderer.domElement);
         this.clock = new THREE.Clock();
         
-        // Create a group for player elements
+        // Add event emitter functionality
+        this.eventListeners = {};
+        
+        // Create a group for the player (camera + controllers)
         this.playerGroup = new THREE.Group();
         this.scene.add(this.playerGroup);
         
-        // For desktop mode, camera is in the scene
-        // For VR mode, camera will be moved to playerGroup
-        this.scene.add(this.camera);
+        // Game state
+        this.isGameStarted = false;
+        this.isInVR = false;
+        this.isMultiplayer = false;
+        this.isLocalPlayer = true; // By default, we're the local player
+        this.playerId = Math.random().toString(36).substring(2, 15); // Generate a random ID
         
-        // Desktop input tracking
+        // Desktop controls
         this.desktopControls = {
             keys: {
                 'ArrowLeft': false,
                 'ArrowRight': false,
+                'ArrowUp': false,
+                'ArrowDown': false,
                 'a': false,
                 'd': false,
+                'w': false,
+                's': false,
                 ' ': false
             },
-            isMouseDown: false,
             mouseX: 0,
-            mouseY: 0
+            mouseY: 0,
+            isMouseDown: false,
+            isRightMouseDown: false,
+            lastMouseX: 0,
+            lastMouseY: 0
         };
         
+        // Initialize controllers
+        this.vrController = null;
+        this.mobileController = null;
+        
+        // Initialize game elements
+        this.environment = null;
+        this.playerPaddle = null;
+        this.aiPaddle = null;
+        this.ball = null;
+        this.paddles = [];
+        
+        // Initialize UI elements
+        this.startButton = null;
+        this.scoreDisplay = null;
+        this.timer = null;
+        this.timerDisplay = null;
+        this.multiplayerMenu = null;
+        this.restartButton = null;
+        this.finalScoreDisplay = null;
+        
+        // Initialize multiplayer manager
+        this.multiplayerManager = new MultiplayerManager(this);
+        
+        // Initialize the game
         this.init();
         this.createGameElements();
         this.setupVR();
         this.setupDesktopControls();
         
-        // Initialize multiplayer manager
-        this.multiplayerManager = new MultiplayerManager(this);
-        
         // Set up multiplayer menu callbacks (will create the menu)
         this.setupMultiplayerCallbacks();
+        
+        // Initialize mobile controller if needed
+        this.detectAndSetupMobileControls();
         
         this.animate();
     }
@@ -77,7 +107,17 @@ export class Game {
         this.renderer.setSize(window.innerWidth, window.innerHeight);
         this.renderer.xr.enabled = true;
         document.body.appendChild(this.renderer.domElement);
-        document.body.appendChild(VRButton.createButton(this.renderer));
+        
+        // Check if we're on a mobile device
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        
+        // Only add VR button if not on mobile
+        if (!isMobile) {
+            const vrButton = VRButton.createButton(this.renderer);
+            document.body.appendChild(vrButton);
+        } else {
+            console.log("Mobile device detected, VR button hidden");
+        }
 
         // Position camera for desktop view
         this.camera.position.set(0, 1.7, 0.8);
@@ -97,6 +137,12 @@ export class Game {
         this.renderer.xr.addEventListener('sessionstart', () => {
             console.log('Setting up VR session');
             
+            // Create player head model for VR
+            this.createPlayerHead();
+            
+            // Create player hand models for VR
+            this.createPlayerHands();
+            
             // Ensure the camera is in the playerGroup for locomotion
             if (!this.playerGroup.children.includes(this.camera)) {
                 // Reset position for VR
@@ -111,9 +157,17 @@ export class Game {
                 // Position the player group for good initial view
                 // X and Z position the player in the play area, Y sets the floor height
                 this.playerGroup.position.set(0, floorHeight, 0.8); 
-                this.playerGroup.lookAt(0, floorHeight, -1.0);
                 
-                console.log('Camera attached to player group for VR locomotion');
+                // Set player rotation to make them face the table
+                // If player is facing opposite direction, we need to face them toward -Z
+                this.playerGroup.rotation.y = 0; // No rotation needed to face the table
+                
+                console.log('Camera attached to player group for VR locomotion facing the table');
+            }
+
+            // In VR, we need to create our controller helpers
+            if (!this.vrController) {
+                this.vrController = new VRController(this.renderer, this.playerGroup);
             }
             
             // Store initial Y position to help maintain consistent floor height
@@ -132,9 +186,6 @@ export class Game {
             this.camera.position.set(0, 1.7, 0.8);
             this.camera.lookAt(0, 0.9, -1.0);
         });
-
-        // Initialize VR controllers
-        this.vrController = new VRController(this.renderer, this.playerGroup);
     }
 
     setupMultiplayerCallbacks() {
@@ -162,6 +213,9 @@ export class Game {
                 // Make sure the AI paddle is positioned correctly
                 this.aiPaddle.getPaddle().position.z = -1.9;
                 this.playerPaddle.getPaddle().position.z = -0.1;
+                
+                // Hide the start button
+                this.startButton.hide();
                 
                 // Start game directly
                 this.ball.start();
@@ -251,12 +305,22 @@ export class Game {
         });
 
         // Add mouse controls for paddle
-        window.addEventListener('mousedown', () => {
-            this.desktopControls.isMouseDown = true;
+        window.addEventListener('mousedown', (event) => {
+            if (event.button === 0) { // Left mouse button
+                this.desktopControls.isMouseDown = true;
+            } else if (event.button === 2) { // Right mouse button
+                this.desktopControls.isRightMouseDown = true;
+                this.desktopControls.lastMouseX = event.clientX;
+                this.desktopControls.lastMouseY = event.clientY;
+            }
         });
 
-        window.addEventListener('mouseup', () => {
-            this.desktopControls.isMouseDown = false;
+        window.addEventListener('mouseup', (event) => {
+            if (event.button === 0) { // Left mouse button
+                this.desktopControls.isMouseDown = false;
+            } else if (event.button === 2) { // Right mouse button
+                this.desktopControls.isRightMouseDown = false;
+            }
         });
         
         // Track mouse position for desktop paddle control
@@ -264,6 +328,77 @@ export class Game {
             // Convert mouse position to normalized coordinates (-1 to 1)
             this.desktopControls.mouseX = (event.clientX / window.innerWidth) * 2 - 1;
             this.desktopControls.mouseY = -(event.clientY / window.innerHeight) * 2 + 1;
+            
+            // Handle camera rotation with right mouse button
+            if (this.desktopControls.isRightMouseDown) {
+                const deltaX = event.clientX - this.desktopControls.lastMouseX;
+                const deltaY = event.clientY - this.desktopControls.lastMouseY;
+                
+                // Rotate camera based on mouse movement
+                this.camera.rotation.y -= deltaX * 0.01;
+                this.camera.rotation.x -= deltaY * 0.01;
+                
+                // Clamp vertical rotation to prevent flipping
+                this.camera.rotation.x = Math.max(-Math.PI / 3, Math.min(Math.PI / 3, this.camera.rotation.x));
+                
+                // Update last mouse position
+                this.desktopControls.lastMouseX = event.clientX;
+                this.desktopControls.lastMouseY = event.clientY;
+            }
+            
+            // Handle mouse hover for multiplayer menu buttons in desktop mode
+            if (!this.isInVR && this.multiplayerMenu && this.multiplayerMenu.isVisible) {
+                // Get the current mouse coordinates
+                const mouseX = this.desktopControls.mouseX;
+                const mouseY = this.desktopControls.mouseY;
+                
+                // Create a raycaster and check for intersections
+                const hoverIntersect = this.multiplayerMenu.checkMouseIntersection(mouseX, mouseY, this.camera);
+                
+                if (hoverIntersect) {
+                    this.multiplayerMenu.highlightButton(hoverIntersect.button);
+                } else {
+                    // Unhighlight current button if mouse is no longer over any button
+                    ['singleplayer', 'host', 'join', 'back'].forEach(buttonKey => {
+                        this.multiplayerMenu.unhighlightButton(buttonKey);
+                    });
+                }
+            }
+            
+            // Handle mouse hover for start button in desktop mode
+            if (!this.isInVR && !this.isGameStarted && this.startButton && this.startButton.getMesh().visible) {
+                const raycaster = new THREE.Raycaster();
+                const mouse = new THREE.Vector2(this.desktopControls.mouseX, this.desktopControls.mouseY);
+                
+                raycaster.setFromCamera(mouse, this.camera);
+                
+                const startButtonIntersects = raycaster.intersectObject(this.startButton.getMesh(), true);
+                if (startButtonIntersects.length > 0) {
+                    this.startButton.highlight();
+                } else {
+                    this.startButton.unhighlight();
+                }
+            }
+            
+            // Handle mouse hover for restart button in desktop mode
+            if (!this.isInVR && this.gameOver && this.restartButton && this.restartButton.isVisible()) {
+                const raycaster = new THREE.Raycaster();
+                const mouse = new THREE.Vector2(this.desktopControls.mouseX, this.desktopControls.mouseY);
+                
+                raycaster.setFromCamera(mouse, this.camera);
+                
+                const restartButtonIntersects = raycaster.intersectObject(this.restartButton.getMesh(), true);
+                if (restartButtonIntersects.length > 0) {
+                    this.restartButton.highlight();
+                } else {
+                    this.restartButton.unhighlight();
+                }
+            }
+        });
+
+        // Prevent context menu on right-click
+        window.addEventListener('contextmenu', (event) => {
+            event.preventDefault();
         });
 
         // Handle click events for UI buttons
@@ -319,6 +454,50 @@ export class Game {
                     }
                 }
                 
+                // Check restart button intersection when game is over
+                if (this.gameOver && this.restartButton && this.restartButton.isVisible()) {
+                    const restartButtonIntersects = raycaster.intersectObject(this.restartButton.getMesh(), true);
+                    if (restartButtonIntersects.length > 0) {
+                        if (this.restartButton.press()) {
+                            console.log("Restart button pressed - restarting game");
+                            
+                            // Play sound if available
+                            if (this.soundManager) {
+                                this.soundManager.playPaddleHit(); // Using an existing sound
+                            }
+                            
+                            // For multiplayer games, use the MultiplayerManager to restart
+                            if (this.isMultiplayer && this.multiplayerManager) {
+                                console.log("Using MultiplayerManager to restart the game");
+                                
+                                // Hide UI locally immediately for better user feedback
+                                this.finalScoreDisplay.hide();
+                                this.restartButton.hide();
+                                
+                                // Send restart request to server via MultiplayerManager
+                                const restartSent = this.multiplayerManager.restartGame();
+                                
+                                if (restartSent) {
+                                    this.showMessage("Restarting game for all players...", 3000);
+                                } else {
+                                    // If restart failed, show error message
+                                    this.showMessage("Failed to restart the game!", 3000);
+                                    
+                                    // Show the UI elements again 
+                                    this.finalScoreDisplay.show(this.playerScore, this.aiScore);
+                                    this.restartButton.show();
+                                }
+                            } else {
+                                // For single player, reset and start locally
+                                this.finalScoreDisplay.hide();
+                                this.restartButton.hide();
+                                this.resetGame();
+                                this.startGame();
+                            }
+                        }
+                    }
+                }
+                
                 // Check multiplayer menu button intersections
                 if (this.multiplayerMenu.isVisible) {
                     const singleplayerIntersects = raycaster.intersectObject(this.multiplayerMenu.buttons.singleplayer, true);
@@ -352,8 +531,14 @@ export class Game {
         this.aiPaddle = new Paddle(this.scene, true);
         this.startButton = new StartButton(this.scene);
         
+        // Initialize the restart button (initially hidden)
+        this.restartButton = new RestartButton(this.scene);
+        
+        // Initialize the final score display (initially hidden)
+        this.finalScoreDisplay = new FinalScoreDisplay(this.scene);
+        
         // Initialize game timer
-        this.timer = new Timer(this.scene, 180); // 3 minute game timer
+        this.timer = new Timer(this.scene, 150); // 2 minutes and 30 seconds
         
         // Create message display for notifications
         this.messageDisplay = this.createMessageDisplay();
@@ -380,6 +565,19 @@ export class Game {
             new THREE.Vector3(-1.90, 1.5, -1),  // AI score on left wall
             new THREE.Euler(0, Math.PI / 2, 0),
             'YOU'
+        );
+        
+        // Add timer displays above both score displays
+        this.playerTimerDisplay = new TimerDisplay(
+            this.scene,
+            new THREE.Vector3(1.90, 2.2, -1),  // Above player score on right wall
+            new THREE.Euler(0, -Math.PI / 2, 0)
+        );
+        
+        this.aiTimerDisplay = new TimerDisplay(
+            this.scene,
+            new THREE.Vector3(-1.90, 2.2, -1),  // Above AI score on left wall
+            new THREE.Euler(0, Math.PI / 2, 0)
         );
 
         // Create start button
@@ -515,11 +713,13 @@ export class Game {
         
         // Update UI labels based on multiplayer status
         if (isActive) {
-            this.playerScoreDisplay.updateLabel(isHost ? 'YOU' : 'OPPONENT');
-            this.aiScoreDisplay.updateLabel(isHost ? 'OPPONENT' : 'YOU');
+            // Always show the local player's score as "YOU" and the remote player's as "OPPONENT"
+            // regardless of whether they're host or guest
+            this.playerScoreDisplay.updateLabel('YOU');
+            this.aiScoreDisplay.updateLabel('OPPONENT');
         } else {
             this.playerScoreDisplay.updateLabel('PONG MASTER');
-            this.aiScoreDisplay.updateLabel('YOU');
+            this.aiScoreDisplay.updateScore(0);
         }
     }
 
@@ -539,27 +739,33 @@ export class Game {
         this.startButton.hide();
         this.multiplayerMenu.hide();
         
-        // IMPORTANT: Force paddle positions to correct sides of table
-        // Recreate paddles to ensure they are positioned correctly
-        if (this.playerPaddle.getPaddle()) {
+        // Setup our player ID - using isHost as an indicator
+        this.playerId = isHost ? 'host-player' : 'guest-player';
+        
+        // IMPORTANT: Create two independent paddles
+        // Remove existing paddles if they exist
+        if (this.playerPaddle && this.playerPaddle.getPaddle()) {
             this.scene.remove(this.playerPaddle.getPaddle());
         }
-        if (this.aiPaddle.getPaddle()) {
+        if (this.aiPaddle && this.aiPaddle.getPaddle()) {
             this.scene.remove(this.aiPaddle.getPaddle());
         }
         
-        // Create new paddles with correct initial positions
-        this.playerPaddle = new Paddle(this.scene, false);
-        this.aiPaddle = new Paddle(this.scene, true);
+        // Create new paddles with correct indices
+        // Both players start at the same position with both paddles available
+        this.paddles = [
+            new Paddle(this.scene, false, 0), // Near paddle (player side)
+            new Paddle(this.scene, false, 1)  // Far paddle (opponent side)
+        ];
         
-        // Double-check positions are correct
-        this.playerPaddle.getPaddle().position.z = -0.1; // Near side
-        this.aiPaddle.getPaddle().position.z = -1.9;     // Far side
+        // For backward compatibility, maintain the old paddle references
+        this.playerPaddle = this.paddles[0];
+        this.aiPaddle = this.paddles[1];
         
-        console.log(`Paddle positions set - Player: ${this.playerPaddle.getPaddle().position.z}, AI: ${this.aiPaddle.getPaddle().position.z}`);
+        console.log(`Created two independent paddles at positions: Near(${this.paddles[0].getPaddle().position.z}), Far(${this.paddles[1].getPaddle().position.z})`);
         
-        // Show a message
-        this.showMessage('Game started!', 3000);
+        // Show a message about picking paddles
+        this.showMessage('Game started! Grab a paddle to claim it.', 5000);
         
         // Start the ball if we're the host
         if (isHost) {
@@ -569,6 +775,10 @@ export class Game {
         // Start the timer and music
         if (this.timer) {
             this.timer.start();
+            
+            // Initialize timer displays with the current time
+            if (this.playerTimerDisplay) this.playerTimerDisplay.updateTime(this.timer.timeLeft);
+            if (this.aiTimerDisplay) this.aiTimerDisplay.updateTime(this.timer.timeLeft);
         }
         
         if (this.soundManager) {
@@ -578,11 +788,12 @@ export class Game {
         // Add haptic feedback when game starts
         const session = this.renderer.xr.getSession();
         if (session) {
-            session.inputSources.forEach(inputSource => {
-                if (inputSource.gamepad?.hapticActuators?.[0]) {
-                    inputSource.gamepad.hapticActuators[0].pulse(1.0, 50);
+            for (let i = 0; i < session.inputSources.length; i++) {
+                const inputSource = session.inputSources[i];
+                if (inputSource.gamepad && inputSource.gamepad.hapticActuators) {
+                    inputSource.gamepad.hapticActuators[0].pulse(1.0, 100);
                 }
-            });
+            }
         }
     }
 
@@ -604,27 +815,39 @@ export class Game {
         this.lastHitTime = currentTime;
     }
 
-    updateRemotePaddlePosition(position, isHostPaddle) {
-        // Update the appropriate paddle
+    updateRemotePaddlePosition(position, isHostPaddle, paddleIndex = null) {
+        // If we have a specific paddle index, use that
+        if (paddleIndex !== null && this.paddles && this.paddles.length > paddleIndex) {
+            const targetPaddle = this.paddles[paddleIndex];
+            
+            // Only update X and Y positions, preserve Z position
+            const currentPos = targetPaddle.getPaddle().position.clone();
+            targetPaddle.getPaddle().position.set(position.x, position.y, currentPos.z);
+            
+            // console.log(`Remote paddle ${paddleIndex} updated: (${position.x.toFixed(2)}, ${position.y.toFixed(2)}, ${currentPos.z.toFixed(2)})`);
+            return;
+        }
+        
+        // Backward compatibility - determine paddle based on host/guest status
         const targetPaddle = isHostPaddle ? 
             (this.isLocalPlayer ? this.playerPaddle : this.aiPaddle) :
             (this.isLocalPlayer ? this.aiPaddle : this.playerPaddle);
         
-        console.log(`Remote paddle update: ${isHostPaddle ? 'Host' : 'Guest'} paddle position before: ${JSON.stringify({
-            x: targetPaddle.getPaddle().position.x,
-            y: targetPaddle.getPaddle().position.y,
-            z: targetPaddle.getPaddle().position.z
-        })}`);
+        // console.log(`Remote paddle update: ${isHostPaddle ? 'Host' : 'Guest'} paddle position before: ${JSON.stringify({
+        //     x: targetPaddle.getPaddle().position.x,
+        //     y: targetPaddle.getPaddle().position.y,
+        //     z: targetPaddle.getPaddle().position.z
+        // })}`);
         
         // Only update X and Y positions, preserve Z position
         const currentPos = targetPaddle.getPaddle().position.clone();
         targetPaddle.getPaddle().position.set(position.x, position.y, currentPos.z);
         
-        console.log(`Remote paddle update: ${isHostPaddle ? 'Host' : 'Guest'} paddle position after: ${JSON.stringify({
-            x: targetPaddle.getPaddle().position.x,
-            y: targetPaddle.getPaddle().position.y,
-            z: targetPaddle.getPaddle().position.z
-        })}`);
+        // console.log(`Remote paddle update: ${isHostPaddle ? 'Host' : 'Guest'} paddle position after: ${JSON.stringify({
+        //     x: targetPaddle.getPaddle().position.x,
+        //     y: targetPaddle.getPaddle().position.y,
+        //     z: targetPaddle.getPaddle().position.z
+        // })}`);
     }
 
     updateRemoteBallPosition(position, velocity) {
@@ -636,16 +859,26 @@ export class Game {
     }
 
     updateRemoteScore(hostScore, guestScore) {
-        if (this.isLocalPlayer) {
-            this.playerScore = hostScore;
-            this.aiScore = guestScore;
-        } else {
-            this.playerScore = guestScore;
-            this.aiScore = hostScore;
+        // Determine which score belongs to the local player based on their role
+        let localPlayerScore, remotePlayerScore;
+        
+        if (this.isLocalPlayer) {  // If local player is host
+            localPlayerScore = hostScore;
+            remotePlayerScore = guestScore;
+        } else {  // If local player is guest
+            localPlayerScore = guestScore;
+            remotePlayerScore = hostScore;
         }
         
-        this.playerScoreDisplay.updateScore(this.playerScore);
-        this.aiScoreDisplay.updateScore(this.aiScore);
+        // Update the internal score variables for consistency with the rest of the code
+        this.playerScore = localPlayerScore;
+        this.aiScore = remotePlayerScore;
+        
+        // Update the score displays
+        // playerScoreDisplay always shows the local player's score (YOU)
+        // aiScoreDisplay always shows the remote player's score (OPPONENT)
+        this.playerScoreDisplay.updateScore(localPlayerScore);
+        this.aiScoreDisplay.updateScore(remotePlayerScore);
     }
 
     handleRemoteCollision(type, position) {
@@ -675,16 +908,63 @@ export class Game {
             this.isInVR = this.renderer.xr.isPresenting;
 
             if (this.vrController && this.isInVR) {
+                // Updated to pass both paddles to the controller
                 this.vrController.checkControllerState(
                     this.vrController.controllers[0],
                     'left',
-                    this.playerPaddle.getPaddle()
+                    this.paddles,
+                    this.playerId,
+                    this.isLocalPlayer  // isHost
                 );
                 this.vrController.checkControllerState(
                     this.vrController.controllers[1],
                     'right',
-                    this.playerPaddle.getPaddle()
+                    this.paddles,
+                    this.playerId,
+                    this.isLocalPlayer  // isHost
                 );
+                
+                // Update the player's head position to match the camera
+                if (this.playerHead && this.camera) {
+                    const headPosition = new THREE.Vector3();
+                    const headRotation = new THREE.Quaternion();
+                    
+                    // Get the XR camera and its position
+                    if (this.renderer.xr.isPresenting) {
+                        // The camera is in the player group, so its world position already includes
+                        // any movement from the thumbstick locomotion
+                        this.camera.getWorldPosition(headPosition);
+                        this.camera.getWorldQuaternion(headRotation);
+                        
+                        // Set the player head to match the camera's world position
+                        this.playerHead.updatePosition(headPosition, headRotation);
+                    }
+                }
+                
+                // Update player hand positions to match controllers
+                if (this.playerHands) {
+                    // Left hand
+                    if (this.playerHands.left && this.vrController.controllers[0]) {
+                        const handPosition = new THREE.Vector3();
+                        const handRotation = new THREE.Quaternion();
+                        
+                        this.vrController.controllers[0].getWorldPosition(handPosition);
+                        this.vrController.controllers[0].getWorldQuaternion(handRotation);
+                        
+                        this.playerHands.left.updatePosition(handPosition, handRotation);
+                    }
+                    
+                    // Right hand
+                    if (this.playerHands.right && this.vrController.controllers[1]) {
+                        const handPosition = new THREE.Vector3();
+                        const handRotation = new THREE.Quaternion();
+                        
+                        this.vrController.controllers[1].getWorldPosition(handPosition);
+                        this.vrController.controllers[1].getWorldQuaternion(handRotation);
+                        
+                        this.playerHands.right.updatePosition(handPosition, handRotation);
+                    }
+                }
                 
                 // Send VR controller data over the network in multiplayer mode
                 if (this.isMultiplayer && this.multiplayerManager && this.multiplayerManager.isMultiplayerActive) {
@@ -697,9 +977,18 @@ export class Game {
 
             // Handle desktop controls when not in VR
             if (!this.isInVR && this.isGameStarted) {
+                // Find the paddle that belongs to this player in desktop mode
+                const ownedPaddle = this.paddles ? this.paddles.find(p => p.isOwnedBy(this.playerId)) : null;
+                // If no paddle is owned, try to claim paddle 0 in desktop mode
+                if (!ownedPaddle && this.paddles && this.paddles.length > 0) {
+                    this.paddles[0].claimOwnership(this.playerId, this.isLocalPlayer);
+                }
+                
+                // Use the owned paddle or fallback to player paddle
+                const paddle = ownedPaddle ? ownedPaddle.getPaddle() : this.playerPaddle.getPaddle();
+                
                 // Handle keyboard paddle movement
                 const paddleSpeed = 0.02;
-                const paddle = this.playerPaddle.getPaddle();
                 
                 if (this.desktopControls.keys['ArrowLeft'] || this.desktopControls.keys['a']) {
                     paddle.position.x -= paddleSpeed;
@@ -714,8 +1003,17 @@ export class Game {
 
             // For desktop mode, use mouse position for paddle control when mouse is down
             if (!this.isInVR && this.desktopControls.isMouseDown) {
+                // Find the owned paddle or use playerPaddle as fallback
+                const ownedPaddle = this.paddles ? this.paddles.find(p => p.isOwnedBy(this.playerId)) : null;
+                const paddle = ownedPaddle ? ownedPaddle.getPaddle() : this.playerPaddle.getPaddle();
+                
                 const paddleX = THREE.MathUtils.clamp(this.desktopControls.mouseX * 1.2, -0.6, 0.6);
-                this.playerPaddle.getPaddle().position.x = paddleX;
+                paddle.position.x = paddleX;
+            }
+
+            // Update mobile controller if available
+            if (this.mobileController) {
+                this.mobileController.update();
             }
 
             // For VR mode, ensure controller inputs are properly handled
@@ -867,7 +1165,7 @@ export class Game {
                                 } else {
                                     console.log("Controller has NOT been released since button press, waiting for release");
                                 }
-                            }, 300); // Wait for button animation to complete
+                            }, 300);
                         }
                     }
                 } else {
@@ -876,47 +1174,184 @@ export class Game {
                 }
             }
 
+            // Handle restart button interaction when game is over
+            if (this.gameOver && this.restartButton && this.restartButton.isVisible() && this.isInVR) {
+                const leftIntersects = this.restartButton.checkIntersection(this.vrController.controllers[0]);
+                const rightIntersects = this.restartButton.checkIntersection(this.vrController.controllers[1]);
+                
+                if (leftIntersects || rightIntersects) {
+                    console.log(`VR controller intersecting restart button: Left: ${leftIntersects ? 'YES' : 'NO'}, Right: ${rightIntersects ? 'YES' : 'NO'}`);
+                    
+                    this.restartButton.highlight();
+                    
+                    // Only process button press on the initial press event
+                    const leftIsNewPress = leftIntersects && this.vrController.controllers[0].userData.isSelecting && this.vrController.controllers[0].userData.isNewPress;
+                    const rightIsNewPress = rightIntersects && this.vrController.controllers[1].userData.isSelecting && this.vrController.controllers[1].userData.isNewPress;
+                    
+                    if (leftIsNewPress || rightIsNewPress) {
+                        if (this.restartButton.press()) {
+                            console.log("Restart button pressed - restarting game");
+                            
+                            // Play sound if available
+                            if (this.soundManager) {
+                                this.soundManager.playPaddleHit(); // Using an existing sound
+                            }
+                            
+                            // For multiplayer games, use the MultiplayerManager to restart
+                            if (this.isMultiplayer && this.multiplayerManager) {
+                                console.log("Using MultiplayerManager to restart the game");
+                                
+                                // Hide UI locally immediately for better user feedback
+                                this.finalScoreDisplay.hide();
+                                this.restartButton.hide();
+                                
+                                // Send restart request to server via MultiplayerManager
+                                const restartSent = this.multiplayerManager.restartGame();
+                                
+                                if (restartSent) {
+                                    this.showMessage("Restarting game for all players...", 3000);
+                                } else {
+                                    // If restart failed, show error message
+                                    this.showMessage("Failed to restart the game!", 3000);
+                                    
+                                    // Show the UI elements again 
+                                    this.finalScoreDisplay.show(this.playerScore, this.aiScore);
+                                    this.restartButton.show();
+                                }
+                            } else {
+                                // For single player, reset and start locally
+                                this.finalScoreDisplay.hide();
+                                this.restartButton.hide();
+                                this.resetGame();
+                                this.startGame();
+                            }
+                        }
+                    }
+                } else {
+                    this.restartButton.unhighlight();
+                }
+            }
+
             if (this.isGameStarted) {
                 // Update the timer if the game is active
                 if (!this.isGamePaused) {
-                    this.timer.update();
+                    const timerFinished = this.timer.update();
                     
-                    // Update ball movement - add this missing logic
-                    const collision = this.ball.update(this.clock.getDelta(), this.playerPaddle, this.aiPaddle);
+                    // Update the timer displays with current time remaining
+                    if (this.playerTimerDisplay && this.aiTimerDisplay) {
+                        this.playerTimerDisplay.updateTime(this.timer.timeLeft);
+                        this.aiTimerDisplay.updateTime(this.timer.timeLeft);
+                    }
                     
-                    // Handle collisions and scoring
-                    if (collision === 'player' || collision === 'ai') {
-                        // Play sound and trigger haptics for paddle hits
-                        if (this.soundManager) {
-                            this.soundManager.playPaddleHit();
-                        }
-                        this.triggerPaddleHaptics(0.7, 50);
-                    } else if (collision === 'player_score') {
-                        // AI scored
-                        this.aiScore++;
-                        this.aiScoreDisplay.updateScore(this.aiScore);
-                        if (this.soundManager) {
-                            this.soundManager.playScore();
-                        }
-                        // Start the ball again after short delay
-                        setTimeout(() => {
-                            if (this.isGameStarted && !this.isGamePaused) {
-                                this.ball.start();
+                    // Check if timer has finished and game is not already over
+                    if (timerFinished && !this.gameOver) {
+                        this.handleGameOver();
+                    }
+                    
+                    // Only update ball movement if the game is not over
+                    if (!this.gameOver) {
+                        // Update ball movement
+                        const collision = this.ball.update(this.clock.getDelta(), this.playerPaddle, this.aiPaddle);
+                        
+                        // Handle collisions and scoring
+                        if (collision === 'player' || collision === 'ai') {
+                            // Play sound and trigger haptics for paddle hits
+                            if (this.soundManager) {
+                                this.soundManager.playPaddleHit();
                             }
-                        }, 1000);
-                    } else if (collision === 'ai_score') {
-                        // Player scored
-                        this.playerScore++;
-                        this.playerScoreDisplay.updateScore(this.playerScore);
-                        if (this.soundManager) {
-                            this.soundManager.playScore();
-                        }
-                        // Start the ball again after short delay
-                        setTimeout(() => {
-                            if (this.isGameStarted && !this.isGamePaused) {
-                                this.ball.start();
+                            this.triggerPaddleHaptics(0.7, 50);
+                            
+                            // Emit paddle hit event for haptic feedback on mobile
+                            this.emit('paddleHit', { side: collision });
+                        } else if (collision === 'wall') {
+                            // Play wall bounce sound
+                            if (this.soundManager) {
+                                this.soundManager.playWallBounce();
                             }
-                        }, 1000);
+                            
+                            // Emit wall hit event for haptic feedback on mobile
+                            this.emit('wallHit', { position: 'wall' });
+                        } else if (collision === 'player_score') {
+                            // AI scored
+                            this.aiScore++;
+                            this.aiScoreDisplay.updateScore(this.aiScore);
+                            if (this.soundManager) {
+                                this.soundManager.playScore();
+                            }
+                            
+                            // Emit score event for haptic feedback
+                            this.emit('score', { side: 'ai' });
+                            
+                            // Sync scores in multiplayer mode
+                            if (this.isMultiplayer && this.multiplayerManager && this.isLocalPlayer) {
+                                this.multiplayerManager.updateScore(this.playerScore, this.aiScore);
+                            }
+                            
+                            // Start the ball again after short delay
+                            setTimeout(() => {
+                                if (this.isGameStarted && !this.isGamePaused && !this.gameOver) {
+                                    this.ball.start();
+                                }
+                            }, 1000);
+                        } else if (collision === 'ai_score') {
+                            // Player scored
+                            this.playerScore++;
+                            this.playerScoreDisplay.updateScore(this.playerScore);
+                            if (this.soundManager) {
+                                this.soundManager.playScore();
+                            }
+                            
+                            // Emit score event for haptic feedback
+                            this.emit('score', { side: 'player' });
+                            
+                            // Sync scores in multiplayer mode
+                            if (this.isMultiplayer && this.multiplayerManager && this.isLocalPlayer) {
+                                this.multiplayerManager.updateScore(this.playerScore, this.aiScore);
+                            }
+                            
+                            // Start the ball again after short delay
+                            setTimeout(() => {
+                                if (this.isGameStarted && !this.isGamePaused && !this.gameOver) {
+                                    this.ball.start();
+                                }
+                            }, 1000);
+                        }
+
+                        // Handle paddle collision
+                        if (collision === 'paddle') {
+                            // Play paddle hit sound
+                            if (this.soundManager) {
+                                this.soundManager.playPaddleHit();
+                            }
+                            
+                            // Emit paddle hit event for haptic feedback
+                            this.emit('paddleHit', { position: collision });
+                            
+                            // Trigger haptic feedback for the player's paddle
+                            if (this.isInVR && collision === this.paddles[0]) {
+                                this.triggerPaddleHaptics();
+                            }
+                            
+                            // Send collision event in multiplayer
+                            if (this.isMultiplayer && this.multiplayerManager) {
+                                this.multiplayerManager.sendCollisionEvent('paddle', collision);
+                            }
+                        }
+                        // Handle wall collision
+                        else if (collision === 'wall') {
+                            // Play wall bounce sound
+                            if (this.soundManager) {
+                                this.soundManager.playWallBounce();
+                            }
+                            
+                            // Emit wall hit event for haptic feedback
+                            this.emit('wallHit', { position: 'wall' });
+                            
+                            // Send collision event in multiplayer
+                            if (this.isMultiplayer && this.multiplayerManager) {
+                                this.multiplayerManager.sendCollisionEvent('wall', collision);
+                            }
+                        }
                     }
                     
                     // Update AI paddle for single player mode
@@ -927,8 +1362,14 @@ export class Game {
                     
                     // In multiplayer mode, send paddle position to the other player
                     if (this.isMultiplayer && this.multiplayerManager) {
-                        // Send our paddle position
-                        this.multiplayerManager.updatePaddlePosition(this.playerPaddle);
+                        // Find paddles owned by this player and send their positions
+                        if (this.paddles) {
+                            this.paddles.forEach((paddle, index) => {
+                                if (paddle.isOwnedBy(this.playerId)) {
+                                    this.multiplayerManager.updatePaddlePosition(paddle, index);
+                                }
+                            });
+                        }
                         
                         // If we're the host, send ball position too
                         if (this.isLocalPlayer) {
@@ -941,6 +1382,7 @@ export class Game {
                 }
             }
 
+            // Render the scene
             this.renderer.render(this.scene, this.camera);
         });
     }
@@ -952,7 +1394,12 @@ export class Game {
         // Reset game state flags
         this.isGameStarted = false;
         this.isGamePaused = false;
-        this.isMultiplayer = false;
+        this.gameOver = false;
+        
+        // Keep multiplayer state if in multiplayer mode
+        if (!this.isMultiplayer) {
+            this.isMultiplayer = false;
+        }
         
         // Reset scores
         this.playerScore = 0;
@@ -962,11 +1409,18 @@ export class Game {
         if (this.playerScoreDisplay) this.playerScoreDisplay.updateScore(0);
         if (this.aiScoreDisplay) this.aiScoreDisplay.updateScore(0);
         
-        // Reset ball position
-        if (this.ball) this.ball.reset();
+        // Reset ball position and ensure it's not moving
+        if (this.ball) {
+            this.ball.reset();
+            this.ball.ballVelocity.set(0, 0, 0);
+        }
         
         // Reset timer
         if (this.timer) this.timer.reset();
+        
+        // Reset timer displays
+        if (this.playerTimerDisplay) this.playerTimerDisplay.updateTime(this.timer.timeLeft);
+        if (this.aiTimerDisplay) this.aiTimerDisplay.updateTime(this.timer.timeLeft);
         
         // Reset paddle positions
         if (this.playerPaddle && this.playerPaddle.getPaddle()) {
@@ -979,16 +1433,26 @@ export class Game {
             this.aiPaddle.getPaddle().position.set(0, 1.0, -1.9);
         }
         
-        // Hide multiplayer menu if visible
-        if (this.multiplayerMenu && this.multiplayerMenu.isVisible) {
+        // Hide multiplayer menu if visible and not in multiplayer mode
+        if (this.multiplayerMenu && this.multiplayerMenu.isVisible && !this.isMultiplayer) {
             this.multiplayerMenu.hide();
         }
         
-        // Show and reset start button
-        if (this.startButton) {
+        // Show and reset start button if not in multiplayer mode
+        if (this.startButton && !this.isMultiplayer) {
             console.log("Resetting and showing start button");
             this.startButton.reset();
             this.startButton.show();
+        }
+        
+        // Hide final score display if visible
+        if (this.finalScoreDisplay) {
+            this.finalScoreDisplay.hide();
+        }
+        
+        // Hide restart button if visible
+        if (this.restartButton) {
+            this.restartButton.hide();
         }
         
         // Reset sound
@@ -1012,6 +1476,16 @@ export class Game {
             left: new THREE.Group(),
             right: new THREE.Group()
         };
+        
+        // Create 3D hand models for remote player
+        this.remoteHands = {
+            left: new HandModel(this.scene, true),  // Left hand
+            right: new HandModel(this.scene, false) // Right hand
+        };
+        
+        // Hide hands initially
+        this.remoteHands.left.hide();
+        this.remoteHands.right.hide();
         
         // Create basic controller models
         for (const side of ['left', 'right']) {
@@ -1044,34 +1518,193 @@ export class Game {
             // Add to remote controller group
             this.remoteControllerGroup.add(this.remoteControllers[side]);
         }
+        
+        // Create the remote player's head model
+        this.remoteHead = new HeadModel(this.scene);
+        this.remoteHead.hide(); // Initially hidden
+    }
+
+    // Create the local player's head model for tracking in VR
+    createPlayerHead() {
+        this.playerHead = new HeadModel(this.scene);
+        this.playerHead.hide(); // Initially hidden, only visible to remote players
+    }
+
+    // Create the local player's hand models for tracking in VR
+    createPlayerHands() {
+        this.playerHands = {
+            left: new HandModel(this.scene, true),  // Left hand
+            right: new HandModel(this.scene, false) // Right hand
+        };
+        
+        // Hide local hands as they're only visible to remote players
+        this.playerHands.left.hide();
+        this.playerHands.right.hide();
     }
 
     // Update remote controller visualizations based on network data
     updateRemoteControllers(data) {
-        if (!this.isMultiplayer || !this.remoteControllers) return;
+        if (!this.isMultiplayer) return;
         
-        // Only show remote controllers in multiplayer mode
+        // Only show remote controllers/hands in multiplayer mode
         const isRemotePlayerInVR = (data.isHost !== this.isLocalPlayer);
         if (!isRemotePlayerInVR) return;
         
-        // Make remote controllers visible
-        this.remoteControllers.left.visible = true;
-        this.remoteControllers.right.visible = true;
-        
-        // Update left controller
+        // Update left controller/hand
         if (data.leftController) {
             const position = data.leftController.position;
             const rotation = data.leftController.rotation;
-            this.remoteControllers.left.position.set(position.x, position.y, position.z);
-            this.remoteControllers.left.quaternion.set(rotation.x, rotation.y, rotation.z, rotation.w);
+            
+            // Update hand model instead of controller rays
+            if (this.remoteHands && this.remoteHands.left) {
+                this.remoteHands.left.show();
+                this.remoteHands.left.updatePosition(position, rotation);
+            }
+            
+            // Keep controllers updated for compatibility but hide them
+            if (this.remoteControllers) {
+                this.remoteControllers.left.visible = false; // Hide ray controller
+                this.remoteControllers.left.position.set(position.x, position.y, position.z);
+                this.remoteControllers.left.quaternion.set(rotation.x, rotation.y, rotation.z, rotation.w);
+            }
         }
         
-        // Update right controller
+        // Update right controller/hand
         if (data.rightController) {
             const position = data.rightController.position;
             const rotation = data.rightController.rotation;
-            this.remoteControllers.right.position.set(position.x, position.y, position.z);
-            this.remoteControllers.right.quaternion.set(rotation.x, rotation.y, rotation.z, rotation.w);
+            
+            // Update hand model instead of controller rays
+            if (this.remoteHands && this.remoteHands.right) {
+                this.remoteHands.right.show();
+                this.remoteHands.right.updatePosition(position, rotation);
+            }
+            
+            // Keep controllers updated for compatibility but hide them
+            if (this.remoteControllers) {
+                this.remoteControllers.right.visible = false; // Hide ray controller
+                this.remoteControllers.right.position.set(position.x, position.y, position.z);
+                this.remoteControllers.right.quaternion.set(rotation.x, rotation.y, rotation.z, rotation.w);
+            }
         }
+        
+        // Update remote head if data is available
+        if (data.head && this.remoteHead) {
+            this.remoteHead.show(); // Make the head visible
+            this.remoteHead.updatePosition(data.head.position, data.head.rotation);
+        }
+    }
+
+    // New method to handle remote paddle ownership claims
+    updateRemotePaddleOwnership(paddleIndex, playerId, isHost) {
+        if (!this.paddles || this.paddles.length <= paddleIndex) return;
+        
+        // Only update if this paddle is not already owned by the local player
+        if (!this.paddles[paddleIndex].isOwnedBy(this.playerId)) {
+            console.log(`Remote player claimed paddle ${paddleIndex}`);
+            this.paddles[paddleIndex].claimOwnership(playerId, isHost);
+        }
+    }
+
+    // Add a method to handle game over
+    handleGameOver() {
+        console.log("Game over - timer finished!");
+        this.gameOver = true;
+        
+        // Stop the ball by resetting it and setting velocity to zero
+        if (this.ball) {
+            // Completely stop the ball from moving
+            this.ball.reset();
+            this.ball.ballVelocity.set(0, 0, 0);
+            
+            // Ensure the ball is stationary by positioning it above the table
+            this.ball.getBall().position.set(0, 2.5, -1.0);
+            
+            // Debug log to confirm ball position and velocity
+            console.log("Ball stopped at position:", this.ball.getBall().position);
+            console.log("Ball velocity reset:", this.ball.ballVelocity);
+        }
+        
+        // Show the final score display for all players
+        this.finalScoreDisplay.show(this.playerScore, this.aiScore);
+        
+        // Only show the restart button to the host in multiplayer mode
+        if (!this.isMultiplayer || (this.isMultiplayer && this.multiplayerManager && this.multiplayerManager.isHost)) {
+            this.restartButton.show();
+        } else {
+            // For non-host players in multiplayer, show a message
+            this.showMessage("Game Over! Waiting for host to restart...", 5000);
+        }
+        
+        // Play a sound if available
+        if (this.soundManager) {
+            this.soundManager.playScore(); // Using an existing sound for game over
+        }
+        
+        // Trigger haptic feedback for game over
+        this.triggerPaddleHaptics(1.0, 200);
+    }
+
+    // Method to start or restart the game
+    startGame() {
+        if (this.isGameStarted) return;
+        
+        console.log("Starting game");
+        this.isGameStarted = true;
+        
+        // Hide start button
+        if (this.startButton) {
+            this.startButton.hide();
+        }
+        
+        // Reset scores
+        this.playerScore = 0;
+        this.aiScore = 0;
+        
+        // Reset and start timer
+        if (this.timer) {
+            this.timer.reset();
+            this.timer.start();
+        }
+        
+        // Reset and start ball
+        if (this.ball) {
+            this.ball.reset();
+            setTimeout(() => {
+                this.ball.start();
+            }, 1000);
+        }
+        
+        // Reset game over state
+        this.gameOver = false;
+        
+        // Emit gameStarted event for mobile controls
+        this.emit('gameStarted');
+    }
+
+    // Event emitter methods
+    addEventListener(event, callback) {
+        if (!this.eventListeners[event]) {
+            this.eventListeners[event] = [];
+        }
+        this.eventListeners[event].push(callback);
+    }
+    
+    removeEventListener(event, callback) {
+        if (this.eventListeners[event]) {
+            this.eventListeners[event] = this.eventListeners[event].filter(cb => cb !== callback);
+        }
+    }
+    
+    emit(event, ...args) {
+        console.log(`Emitting event: ${event}`, args);
+        if (this.eventListeners[event]) {
+            this.eventListeners[event].forEach(callback => callback(...args));
+        }
+    }
+    
+    detectAndSetupMobileControls() {
+        // Initialize mobile controller
+        this.mobileController = new MobileController(this);
     }
 }

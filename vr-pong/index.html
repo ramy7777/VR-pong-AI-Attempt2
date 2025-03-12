@@ -289,17 +289,6 @@
             margin-top: 10px;
             display: none;
         }
-        
-        .game-buttons {
-            position: absolute;
-            top: 530px;
-            left: 0;
-            right: 0;
-            display: flex;
-            justify-content: center;
-            gap: 30px;
-            z-index: 100;
-        }
     </style>
     <!-- Include Socket.IO client library from CDN -->
     <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
@@ -338,20 +327,6 @@
     <h1 class="game-title">PONG MASTER VR</h1>
     <div class="game-subtitle">Experience the classic game in virtual reality</div>
     
-    <!-- OpenAI Voice Assistant UI -->
-    <div id="openai-voice-ui" class="openai-voice-container">
-        <div class="openai-voice-header">AI Voice Assistant</div>
-        <div class="openai-voice-content">
-            <div class="openai-voice-status">Connect to OpenAI voice assistant to enhance your gaming experience</div>
-            <div class="openai-voice-note">You'll need your own OpenAI API key with access to GPT-4o mini realtime</div>
-            <div class="openai-voice-controls">
-                <button id="connectOpenAI" class="openai-btn">Connect Voice Assistant</button>
-                <div id="voiceStatus" class="voice-status">Not connected</div>
-            </div>
-            <div id="openaiTranscript" class="openai-transcript"></div>
-        </div>
-    </div>
-    
     <div class="game-buttons">
         <button id="startVR" class="btn">Enter VR Mode</button>
         <button id="startDesktop" class="btn">Play in Browser</button>
@@ -364,6 +339,19 @@
     <div id="errorMessage"></div>
     <div id="loadingMessage">Loading game assets...</div>
     
+    <!-- OpenAI Voice Assistant UI -->
+    <div class="openai-voice-container">
+        <div class="openai-voice-header">AI VOICE ASSISTANT</div>
+        <div class="openai-voice-content">
+            <div id="voiceStatus" class="openai-voice-status">Not connected</div>
+            <div class="openai-voice-note">Connect to use voice commands and get game assistance</div>
+            <div class="openai-voice-controls">
+                <button id="connectOpenAI" class="openai-btn">Connect Voice Assistant</button>
+            </div>
+            <div id="openaiTranscript" class="openai-transcript"></div>
+        </div>
+    </div>
+    
     <script type="importmap">
     {
         "imports": {
@@ -373,11 +361,6 @@
         }
     }
     </script>
-    
-    <!-- Load OpenAI Voice Integration -->
-    <script src="js/openai-voice.js"></script>
-    
-    <!-- Main game script -->
     <script type="module">
         import { Game } from './js/game/Game.js';
         let game;
@@ -410,15 +393,10 @@
                     document.querySelector('.game-buttons').style.display = 'none';
                     document.querySelector('.game-title').style.display = 'none';
                     document.querySelector('.game-subtitle').style.display = 'none';
-                    document.getElementById('openai-voice-ui').style.display = 'none';
                     loadingMsg.style.display = 'block';
                     
                     // Initialize the game
-                    game = new Game(document.body);
-                    
-                    // Create a game-started event for other components to listen to
-                    const gameStartedEvent = new Event('game-started');
-                    document.dispatchEvent(gameStartedEvent);
+                    game = new Game();
                     
                     loadingMsg.style.display = 'none';
                     clearInterval(loadingInterval);
@@ -460,5 +438,9 @@
             });
         });
     </script>
+    
+    <!-- OpenAI Voice Assistant Script -->
+    <script src="js/openai-realtime-bundle.js"></script>
+    <script src="js/openai-voice.js"></script>
 </body>
 </html>
