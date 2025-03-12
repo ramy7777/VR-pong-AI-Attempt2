@@ -70,7 +70,6 @@ export class Ball {
             // Check if we've reached a new highest speed
             const newSpeed = this.ballVelocity.length();
             if (newSpeed > this.highestSpeedReached) {
-                console.log(`New highest speed reached: ${newSpeed.toFixed(5)} (previous: ${this.highestSpeedReached.toFixed(5)})`);
                 this.highestSpeedReached = newSpeed;
             }
             
@@ -257,8 +256,6 @@ export class Ball {
         // Only check if ball is actually moving
         if (currentSpeed > 0 && currentSpeed < this.highestSpeedReached) {
             // Ball is moving but below its highest reached speed, so increase it
-            console.log(`Ball speed (${currentSpeed.toFixed(5)}) below highest speed (${this.highestSpeedReached.toFixed(5)}), restoring to highest speed`);
-            // Maintain direction but restore speed
             this.ballVelocity.normalize().multiplyScalar(this.highestSpeedReached);
         }
     }

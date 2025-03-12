@@ -1374,7 +1374,6 @@ export class Game {
                     
                     // Update AI paddle for single player mode
                     if (!this.isMultiplayer && this.aiPaddle && this.ball) {
-                        console.log("Updating AI paddle position to track ball");
                         this.aiPaddle.updateAI(this.ball.getBall());
                     }
                     
@@ -1734,7 +1733,6 @@ export class Game {
     }
     
     emit(event, ...args) {
-        console.log(`Emitting event: ${event}`, args);
         if (this.eventListeners[event]) {
             this.eventListeners[event].forEach(callback => callback(...args));
         }

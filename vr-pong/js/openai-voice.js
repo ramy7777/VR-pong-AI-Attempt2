@@ -13,6 +13,18 @@ class OpenAIVoiceAssistant {
         this.isReconnecting = false;
         this.apiKey = null;
         
+        // API format tracking
+        this.contentType = 'text'; // Start with 'text' and switch if needed
+        this.lastContentTypeError = null;
+        
+        // Rate limiting and connection health
+        this.lastMessageTime = 0;
+        this.messageQueue = [];
+        this.isProcessingQueue = false;
+        this.heartbeatInterval = null;
+        this.reconnectAttempts = 0;
+        this.maxReconnectAttempts = 5;
+        
         // Audio processing
         this.isListening = false;
         this.audioContext = null;
@@ -134,14 +146,18 @@ class OpenAIVoiceAssistant {
             // Update status
             this.updateStatus('Connecting...');
             
-            // Request API key from user
-            const apiKeyInput = prompt('Please enter your OpenAI API Key:', '');
-            if (!apiKeyInput) {
-                this.updateStatus('Connection cancelled');
-                return;
+            // Request API key from user only if we don't have one
+            if (!this.apiKey) {
+                const apiKeyInput = prompt('Please enter your OpenAI API Key:', '');
+                if (!apiKeyInput) {
+                    this.updateStatus('Connection cancelled');
+                    return;
+                }
+                
+                this.apiKey = apiKeyInput.trim();
+            } else {
+                console.log('Reusing existing API key');
             }
-            
-            this.apiKey = apiKeyInput.trim();
             
             // Initialize audio first
             console.log('Setting up audio before connecting...');
@@ -343,18 +359,37 @@ class OpenAIVoiceAssistant {
         // Handle data channel open
         this.dataChannel.addEventListener('open', () => {
             console.log('Data channel opened');
+            
+            // Start heartbeat when channel opens
+            this.startHeartbeat();
         });
         
         // Handle data channel close
         this.dataChannel.addEventListener('close', () => {
             console.log('Data channel closed');
+            
+            // Stop heartbeat when channel closes
+            this.stopHeartbeat();
         });
         
         // Handle incoming messages
         this.dataChannel.addEventListener('message', event => {
             try {
-                console.log('Received message on data channel:', event.data);
+                // Only log important messages, not session updates
                 const data = JSON.parse(event.data);
+                
+                // Skip logging for session updates and other frequent messages
+                if (!data.type.includes('session') && 
+                    !data.type.includes('rate_limits') && 
+                    !data.type.includes('output_audio_buffer')) {
+                    console.log('Received message on data channel:', event.data);
+                }
+                
+                // Check for content type errors and adapt
+                if (data.type === 'error' && data.error && 
+                    data.error.param === 'item.content[0].type') {
+                    this.handleContentTypeError(data.error);
+                }
                 
                 // Handle different types of messages
                 if (data.type === 'response.audio_transcript.done' || 
@@ -362,8 +397,8 @@ class OpenAIVoiceAssistant {
                     this.handleTranscriptUpdate(data);
                 } else if (data.type === 'conversation.item.created') {
                     this.handleMessageUpdate(data);
-                } else if (data.type === 'session.created' || data.type === 'session.updated') {
-                    // When session is created or updated, set custom instructions
+                } else if (data.type === 'session.created') {
+                    // Only update instructions when session is first created, not on every update
                     this.updateSessionInstructions();
                 }
             } catch (error) {
@@ -381,9 +416,9 @@ class OpenAIVoiceAssistant {
             this.transcript = data.transcript;
             this.updateTranscript(data.transcript);
         } else if (data.type === 'response.audio_transcript.delta' && data.delta) {
-            console.log('Transcript update (delta):', data.delta);
+            // Skip logging individual delta updates to reduce console spam
             this.transcript += data.delta;
-            this.updateTranscript(this.transcript);
+            this.updateTranscript(this.transcript, true);
         }
     }
     
@@ -488,27 +523,44 @@ class OpenAIVoiceAssistant {
         this.isReconnecting = true;
         this.updateStatus('Reconnecting...');
         
+        // Track reconnection attempts
+        this.reconnectAttempts++;
+        
+        // If we've tried too many times, give up and ask user to manually reconnect
+        if (this.reconnectAttempts > this.maxReconnectAttempts) {
+            console.log(`Exceeded maximum reconnection attempts (${this.maxReconnectAttempts})`);
+            this.updateStatus('Connection lost. Please reconnect manually.');
+            this.isReconnecting = false;
+            this.reconnectAttempts = 0;
+            return;
+        }
+        
         try {
             // Disconnect first to clean up
             await this.disconnect(true);
             
-            // Wait for resources to be released
-            await new Promise(resolve => setTimeout(resolve, 3000));
+            // Wait for resources to be released - increase wait time with each attempt
+            const backoffTime = Math.min(3000 + (this.reconnectAttempts * 1000), 10000);
+            await new Promise(resolve => setTimeout(resolve, backoffTime));
             
             // Reconnect
             await this.connect();
+            
+            // Reset reconnect attempts on success
+            this.reconnectAttempts = 0;
             
         } catch (err) {
             console.error('Error during reconnection:', err);
             this.updateStatus(`Reconnection failed: ${err.message}`);
             this.isConnected = false;
             
-            // Schedule another attempt
+            // Schedule another attempt with exponential backoff
+            const nextAttemptDelay = Math.min(5000 * Math.pow(1.5, this.reconnectAttempts), 30000);
             setTimeout(() => {
                 if (!this.isConnected && !this.isReconnecting) {
                     this.reconnect();
                 }
-            }, 10000);
+            }, nextAttemptDelay);
         } finally {
             this.isReconnecting = false;
         }
@@ -592,14 +644,16 @@ class OpenAIVoiceAssistant {
         }
     }
     
-    updateTranscript(text) {
+    updateTranscript(text, isDelta = false) {
         // Don't update the transcript element since we're not showing it
         // if (this.transcriptElement) {
         //     this.transcriptElement.textContent = text;
         // }
         
-        // Just log the transcript for debugging
-        console.log('Transcript update:', text);
+        // Just log the transcript for debugging, but skip delta updates
+        if (!isDelta) {
+            console.log('Transcript update:', text);
+        }
     }
     
     showTranscript() {
@@ -647,79 +701,267 @@ class OpenAIVoiceAssistant {
         console.log(`${role} message: ${text}`);
     }
     
-    // Send a text message through the data channel
-    async sendTextMessage(message) {
+    // Send a message through the data channel with rate limiting
+    async sendDataChannelMessage(payload) {
         if (!this.isConnected || !this.dataChannel) {
             console.error('Cannot send message: not connected');
-            this.updateStatus('Not connected - please reconnect');
-            return null;
+            return false;
+        }
+        
+        // Check data channel state before adding to queue
+        if (this.dataChannel.readyState !== 'open') {
+            console.error('Data channel not open, state:', this.dataChannel.readyState);
+            
+            // Don't add to queue if channel is closed or closing
+            if (this.dataChannel.readyState === 'closed' || this.dataChannel.readyState === 'closing') {
+                console.log('Data channel is closed or closing, scheduling reconnection');
+                if (!this.isReconnecting) {
+                    setTimeout(() => this.reconnect(), 3000);
+                }
+                return false;
+            }
+            
+            // If channel is connecting, we can queue the message
+            if (this.dataChannel.readyState === 'connecting') {
+                console.log('Data channel is connecting, queueing message');
+            }
         }
         
         try {
-            console.log('Sending text message:', message);
+            // Validate message format before queueing
+            const message = typeof payload === 'string' ? JSON.parse(payload) : payload;
             
-            // Update UI
-            this.updateStatus(`User: ${message}`);
-            this.addMessage('user', message);
-            
-            // Check data channel state
-            if (this.dataChannel.readyState !== 'open') {
-                console.error('Data channel not open, state:', this.dataChannel.readyState);
-                
-                // Try to reconnect
-                if (!this.isReconnecting) {
-                    this.updateStatus('Connection issue - attempting to reconnect...');
-                    setTimeout(() => this.reconnect(), 1000);
-                }
-                
-                return null;
+            // Ensure message has required fields
+            if (!message.type) {
+                console.error('Invalid message format: missing type field');
+                return false;
             }
             
-            // Format message according to OpenAI's WebRTC API requirements
-            const payload = JSON.stringify({
-                type: 'conversation.item.create',
-                item: {
-                    type: 'message',
-                    role: 'user',
-                    content: [{
-                        type: 'input_text',
-                        text: message
-                    }]
+            // For conversation items, ensure correct content type based on role
+            if (message.type === 'conversation.item.create' && 
+                message.item && 
+                message.item.content && 
+                message.item.content.length > 0) {
+                
+                const role = message.item.role;
+                const contentType = message.item.content[0].type;
+                
+                // FIXED: OpenAI expects different content types for different roles
+                // - User and System messages should use 'input_text'
+                // - Assistant messages should use 'text'
+                if ((role === 'user' || role === 'system') && contentType !== 'input_text') {
+                    console.log(`Correcting content type for ${role} message from '${contentType}' to 'input_text'`);
+                    message.item.content[0].type = 'input_text';
+                } else if (role === 'assistant' && contentType !== 'text') {
+                    console.log(`Correcting content type for assistant message from '${contentType}' to 'text'`);
+                    message.item.content[0].type = 'text';
                 }
-            });
+                
+                // Re-stringify with corrected format
+                payload = JSON.stringify(message);
+            }
             
-            this.dataChannel.send(payload);
-            console.log('Message sent successfully');
+            // Add to queue
+            this.messageQueue.push(payload);
             
-            // Request a response after sending the message
-            const responsePayload = JSON.stringify({
-                type: 'response.create'
-            });
-            
-            setTimeout(() => {
-                if (this.dataChannel && this.dataChannel.readyState === 'open') {
-                    this.dataChannel.send(responsePayload);
-                    console.log('Response request sent');
-                }
-            }, 500);
+            // Process queue if not already processing
+            if (!this.isProcessingQueue) {
+                this.processMessageQueue();
+            }
             
             return true;
         } catch (error) {
-            console.error('Error sending text message:', error);
-            this.updateStatus(`Error: ${error.message}`);
+            console.error('Error preparing message:', error);
+            return false;
+        }
+    }
+    
+    // Process message queue with rate limiting
+    async processMessageQueue() {
+        if (this.messageQueue.length === 0) {
+            this.isProcessingQueue = false;
+            return;
+        }
+        
+        this.isProcessingQueue = true;
+        
+        // Check if we need to wait before sending the next message
+        const now = Date.now();
+        const timeSinceLastMessage = now - this.lastMessageTime;
+        const minMessageInterval = 300; // Minimum 300ms between messages
+        
+        if (timeSinceLastMessage < minMessageInterval) {
+            // Wait before sending next message
+            await new Promise(resolve => setTimeout(resolve, minMessageInterval - timeSinceLastMessage));
+        }
+        
+        // Get next message from queue
+        const payload = this.messageQueue.shift();
+        
+        try {
+            // Check data channel state
+            if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
+                console.error('Data channel not open or null, state:', this.dataChannel ? this.dataChannel.readyState : 'null');
+                
+                // Put message back in queue if it's important and channel might reopen
+                if (this.dataChannel && this.dataChannel.readyState === 'connecting') {
+                    console.log('Data channel is connecting, returning message to queue');
+                    this.messageQueue.unshift(payload);
+                    
+                    // Wait and check again
+                    setTimeout(() => {
+                        this.isProcessingQueue = false;
+                        this.processMessageQueue();
+                    }, 1000);
+                    return;
+                } else if (this.messageQueue.length < 10) { // Keep queue reasonably sized
+                    this.messageQueue.unshift(payload);
+                }
+                
+                // Try to reconnect if not already reconnecting
+                if (!this.isReconnecting) {
+                    this.updateStatus('Connection issue - attempting to reconnect...');
+                    setTimeout(() => this.reconnect(), 3000);
+                }
+                
+                this.isProcessingQueue = false;
+                return;
+            }
             
-            // Try to reconnect on error
+            // Log message type for debugging (but not the full payload)
+            try {
+                const msgObj = JSON.parse(payload);
+                console.log(`Sending message type: ${msgObj.type}`);
+            } catch (e) {
+                // Not JSON or couldn't parse
+            }
+            
+            // Send the message
+            this.dataChannel.send(payload);
+            this.lastMessageTime = Date.now();
+            
+            // Process next message with a small delay
+            setTimeout(() => this.processMessageQueue(), 50);
+            
+        } catch (error) {
+            console.error('Error sending message:', error);
+            
+            // Put message back in queue if it's important
+            if (this.messageQueue.length < 10) { // Don't let queue get too large
+                this.messageQueue.unshift(payload);
+            }
+            
+            // Try to reconnect on error if not already reconnecting
             if (!this.isReconnecting) {
                 setTimeout(() => this.reconnect(), 3000);
             }
             
-            return null;
+            this.isProcessingQueue = false;
         }
+    }
+    
+    // Heartbeat to keep connection alive
+    startHeartbeat() {
+        // Removing heartbeat functionality as it's causing disconnections
+        // The OpenAI API doesn't support 'ping' message type
+        console.log('Heartbeat functionality disabled to prevent disconnections');
+    }
+    
+    stopHeartbeat() {
+        if (this.heartbeatInterval) {
+            clearInterval(this.heartbeatInterval);
+            this.heartbeatInterval = null;
+        }
+    }
+    
+    // Handle content type errors and adapt
+    handleContentTypeError(error) {
+        console.log('Content type error detected:', error.message);
+        
+        // Log the correct content types to use based on OpenAI's API requirements
+        console.log('OpenAI WebRTC API requires specific content types:');
+        console.log('- User messages must use "input_text"');
+        console.log('- System messages must use "input_text"');
+        console.log('- Assistant messages must use "text"');
+        
+        // Mark the time of the error to prevent immediate reconnection
+        this.lastContentTypeError = Date.now();
+        
+        // Log the error details for debugging
+        console.log('Content type error handled, continuing with connection');
+        console.log('Error details:', JSON.stringify(error));
     }
     
     // Properly disconnect the WebRTC connection when a data channel error occurs
     handleDataChannelError(error) {
         console.error('Data channel error:', error);
+        
+        // Check if this is a content type error that we've already handled
+        const now = Date.now();
+        if (this.lastContentTypeError && (now - this.lastContentTypeError < 5000)) {
+            console.log('Ignoring data channel error shortly after content type error');
+            return;
+        }
+        
+        // Extract error information if available
+        let errorMessage = '';
+        if (error && error.error) {
+            errorMessage = error.error.message || 'Unknown error';
+        } else if (error && typeof error === 'object') {
+            errorMessage = JSON.stringify(error);
+        } else if (error) {
+            errorMessage = error.toString();
+        }
+        
+        console.log(`Data channel error details: ${errorMessage}`);
+        
+        // If this is a content type error, handle it without disconnecting
+        if (errorMessage.includes('content') && errorMessage.includes('type')) {
+            console.log('Detected content type error, handling without disconnection');
+            this.lastContentTypeError = Date.now();
+            return;
+        }
+        
+        // Check if the error is related to the connection being closed already
+        if (!this.dataChannel || this.dataChannel.readyState === 'closed' || this.dataChannel.readyState === 'closing') {
+            console.log('Data channel already closed or closing, scheduling delayed reconnect');
+            
+            // Schedule a delayed reconnect instead of immediate
+            if (!this.isReconnecting) {
+                setTimeout(() => {
+                    if (!this.isConnected && !this.isReconnecting) {
+                        this.reconnect();
+                    }
+                }, 5000);
+            }
+            return;
+        }
+        
+        // Track error frequency to prevent reconnection loops
+        if (!this.errorCount) this.errorCount = 0;
+        if (!this.lastErrorTime) this.lastErrorTime = 0;
+        
+        // Reset error count if it's been more than 30 seconds since last error
+        if (now - this.lastErrorTime > 30000) {
+            this.errorCount = 0;
+        }
+        
+        this.errorCount++;
+        this.lastErrorTime = now;
+        
+        // If we're getting too many errors in a short time, back off
+        if (this.errorCount > 5) {
+            console.log('Too many errors in a short time, backing off from reconnection attempts');
+            this.updateStatus('Connection unstable - please try again later');
+            
+            // Reset after a longer cooldown period
+            setTimeout(() => {
+                this.errorCount = 0;
+                this.isReconnecting = false;
+            }, 60000);
+            
+            return;
+        }
         
         // Only attempt to reconnect if we're not already in the process
         if (!this.isReconnecting) {
@@ -729,20 +971,24 @@ class OpenAIVoiceAssistant {
             // Mark as reconnecting to prevent multiple attempts
             this.isReconnecting = true;
             
-            // Fully disconnect then reconnect after a delay
+            // Calculate backoff time based on error count
+            const backoffTime = Math.min(3000 * Math.pow(1.5, this.errorCount), 30000);
+            
+            // Fully disconnect then reconnect after a longer delay
             setTimeout(async () => {
                 try {
                     // First disconnect cleanly
                     await this.disconnect(true);
                     
                     // Wait for resources to be released
-                    await new Promise(resolve => setTimeout(resolve, 3000));
+                    await new Promise(resolve => setTimeout(resolve, 5000));
                     
                     // Then attempt to reconnect
                     await this.connect();
                     
-                    // Reset reconnection flag
+                    // Reset reconnection flag and error count on success
                     this.isReconnecting = false;
+                    this.errorCount = 0;
                 } catch (reconnectError) {
                     console.error('Failed to reconnect after data channel error:', reconnectError);
                     this.updateStatus('Connection failed - please try again');
@@ -753,18 +999,26 @@ class OpenAIVoiceAssistant {
                         if (!this.isConnected && !this.isReconnecting) {
                             this.connect();
                         }
-                    }, 5000);
+                    }, 10000);
                 }
-            }, 1000);
+            }, backoffTime);
         }
+    }
+    
+    // Get the current content type to use based on role
+    getCurrentContentType(role) {
+        // According to OpenAI documentation and the error messages:
+        // - User and System messages should use 'input_text'
+        // - Assistant messages should use 'text'
+        return role === 'assistant' ? 'text' : 'input_text';
     }
     
     // Send initial greeting message using the correct format
     async sendGreeting() {
         console.log('Sending initial greeting...');
         
-        // Define greeting message with game-specific content
-        const greetingMessage = "Hello! I'm your VR Pong game assistant. I can help you with game rules, controls, strategies, or any questions about the game. How can I assist you with your VR Pong experience today?";
+        // Define greeting message with game-specific content - simplified for brevity
+        const greetingMessage = "Ready";
         
         try {
             // Wait to ensure connection is stable
@@ -787,13 +1041,14 @@ class OpenAIVoiceAssistant {
                     type: 'message',
                     role: 'assistant',
                     content: [{
-                        type: 'input_text',
+                        type: 'text', // Assistant messages use 'text' type
                         text: greetingMessage
                     }]
                 }
             });
             
-            this.dataChannel.send(payload);
+            // Use the rate-limited message sender
+            await this.sendDataChannelMessage(payload);
             console.log('Initial greeting sent successfully');
             
             // Request a response
@@ -803,9 +1058,7 @@ class OpenAIVoiceAssistant {
             
             // Wait a moment before requesting a response
             setTimeout(() => {
-                if (this.dataChannel && this.dataChannel.readyState === 'open') {
-                    this.dataChannel.send(responsePayload);
-                }
+                this.sendDataChannelMessage(responsePayload);
             }, 500);
             
         } catch (error) {
@@ -821,81 +1074,67 @@ class OpenAIVoiceAssistant {
         }
         
         let updateMessage = '';
-        const scoreDifference = Math.abs(this.gameState.playerScore - this.gameState.aiScore);
-        const isPlayerWinning = this.gameState.playerScore > this.gameState.aiScore;
-        const isAiWinning = this.gameState.aiScore > this.gameState.playerScore;
-        const isTied = this.gameState.playerScore === this.gameState.aiScore;
         
         switch (eventType) {
             case 'game_started':
-                updateMessage = "The game has started! Good luck and have fun!";
+                updateMessage = "Game started";
                 break;
                 
             case 'game_ended':
-                if (isPlayerWinning) {
-                    updateMessage = `Game over! You won with a score of ${this.gameState.playerScore}-${this.gameState.aiScore}. Congratulations!`;
-                } else if (isAiWinning) {
-                    updateMessage = `Game over! The AI won with a score of ${this.gameState.aiScore}-${this.gameState.playerScore}. Better luck next time!`;
+                if (this.gameState.playerScore > this.gameState.aiScore) {
+                    updateMessage = `Player won ${this.gameState.playerScore}-${this.gameState.aiScore}`;
+                } else if (this.gameState.aiScore > this.gameState.playerScore) {
+                    updateMessage = `AI won ${this.gameState.aiScore}-${this.gameState.playerScore}`;
                 } else {
-                    updateMessage = `Game over! It's a tie with a score of ${this.gameState.playerScore}-${this.gameState.aiScore}.`;
+                    updateMessage = `Tie ${this.gameState.playerScore}-${this.gameState.aiScore}`;
                 }
                 break;
                 
             case 'player_scored':
-                if (this.gameState.consecutivePlayerScores >= 3) {
-                    updateMessage = `Wow! You scored again! That's ${this.gameState.consecutivePlayerScores} points in a row! The score is now ${this.gameState.playerScore}-${this.gameState.aiScore}.`;
-                } else if (scoreDifference >= 5 && isPlayerWinning) {
-                    updateMessage = `You scored! You're dominating with a ${scoreDifference} point lead! The score is now ${this.gameState.playerScore}-${this.gameState.aiScore}.`;
-                } else {
-                    updateMessage = `You scored! The score is now ${this.gameState.playerScore}-${this.gameState.aiScore}.`;
-                }
+                updateMessage = `Player scored ${this.gameState.playerScore}-${this.gameState.aiScore}`;
                 break;
                 
             case 'ai_scored':
-                if (this.gameState.consecutiveAiScores >= 3) {
-                    updateMessage = `The AI scored again! That's ${this.gameState.consecutiveAiScores} points in a row. The score is now ${this.gameState.playerScore}-${this.gameState.aiScore}.`;
-                } else if (scoreDifference >= 5 && isAiWinning) {
-                    updateMessage = `The AI scored. They're ahead by ${scoreDifference} points. The score is now ${this.gameState.playerScore}-${this.gameState.aiScore}.`;
-                } else {
-                    updateMessage = `The AI scored. The score is now ${this.gameState.playerScore}-${this.gameState.aiScore}.`;
-                }
-                break;
-                
-            case 'score_update':
-                updateMessage = `The current score is: You ${this.gameState.playerScore}, AI ${this.gameState.aiScore}.`;
+                updateMessage = `AI scored ${this.gameState.playerScore}-${this.gameState.aiScore}`;
                 break;
                 
             default:
                 return; // Don't send anything for unknown event types
         }
         
-        // Format message according to OpenAI's WebRTC API requirements
-        const payload = JSON.stringify({
-            type: 'conversation.item.create',
-            item: {
-                type: 'message',
-                role: 'system',
-                content: [{
-                    type: 'input_text',
-                    text: updateMessage
-                }]
-            }
-        });
-        
-        this.dataChannel.send(payload);
-        console.log(`Game state update sent: ${eventType} - ${updateMessage}`);
-        
-        // Request a response for certain events
-        if (['game_ended', 'player_scored', 'ai_scored'].includes(eventType)) {
+        try {
+            // Update UI
+            this.updateStatus(`Game update: ${updateMessage}`);
+            this.addMessage('system', updateMessage);
+            
+            // Format message according to OpenAI's WebRTC API requirements
+            // System messages use 'input_text' type (confirmed from error messages)
+            const payload = JSON.stringify({
+                type: 'conversation.item.create',
+                item: {
+                    type: 'message',
+                    role: 'system',
+                    content: [{
+                        type: 'input_text', // System messages must use 'input_text' type
+                        text: updateMessage
+                    }]
+                }
+            });
+            
+            // Use the rate-limited message sender instead of direct send
+            this.sendDataChannelMessage(payload);
+            console.log(`Game state update sent: ${eventType} - ${updateMessage}`);
+            
+            // Request a response for all game events
             const responsePayload = JSON.stringify({
                 type: 'response.create'
             });
             
             setTimeout(() => {
-                if (this.dataChannel && this.dataChannel.readyState === 'open') {
-                    this.dataChannel.send(responsePayload);
-                }
+                this.sendDataChannelMessage(responsePayload);
             }, 500);
+        } catch (error) {
+            console.error('Error sending game state update:', error);
         }
     }
     
@@ -910,64 +1149,103 @@ class OpenAIVoiceAssistant {
         
         // Include current game state in the instructions
         const currentScore = this.gameState.gameInProgress 
-            ? `Current score: Player ${this.gameState.playerScore}, AI ${this.gameState.aiScore}.` 
-            : 'No game is currently in progress.';
+            ? `${this.gameState.playerScore}-${this.gameState.aiScore}` 
+            : 'No game';
         
-        // Custom instructions about the VR Pong game
+        // Custom instructions about the VR Pong game - extremely simplified for brevity
         const gameInstructions = `
-            You are a specialized AI assistant for a VR Pong game. Your primary role is to help players understand and enjoy the game.
+            You are a VR Pong game assistant. Be extremely brief.
             
-            Game Rules and Mechanics:
-            - This is a 3D virtual reality version of the classic Pong game
-            - Players use VR controllers to move paddles and hit a ball back and forth
-            - The game can be played in single-player mode against an AI opponent or multiplayer mode against other players
-            - Players score points when their opponent misses the ball
-            - The game features power-ups that can change ball speed, paddle size, or add special effects
-            - Players can customize their paddle appearance and game environment
+            CRITICAL RULES:
+            - Use 2 words or less for ALL responses
+            - Never use more than 2 words total
+            - No complete sentences
+            - No greetings or pleasantries
+            - Only essential gameplay tips
+            - No punctuation
+            - No articles (a, an, the)
             
-            Game Controls:
-            - Move the VR controller to position the paddle
-            - The paddle follows the controller's position in 3D space
-            - Press trigger buttons for special actions or power-ups
-            - Use the menu button to access game settings
-            
-            Game Modes:
-            - Practice Mode: Play against an AI with adjustable difficulty
-            - Multiplayer Mode: Play against other players online
-            - Tournament Mode: Compete in structured competitions
-            
-            Current Game State:
-            ${currentScore}
-            
-            As a game commentator and assistant:
-            - Provide enthusiastic commentary about the game progress
-            - Offer encouragement when the player is behind
-            - Congratulate the player on good plays and scoring
-            - Provide tips for improvement when appropriate
-            - Keep track of the score and mention it in your responses
-            - Be concise in your responses during active gameplay
-            
-            Focus exclusively on answering questions about the game, its rules, controls, strategies, and troubleshooting.
-            Be enthusiastic and encouraging to players, especially beginners.
-            If asked about topics unrelated to the VR Pong game, politely redirect the conversation back to the game.
-            
-            You will receive real-time updates about the game state through system messages.
-            When you receive these updates, acknowledge them naturally in your responses.
+            Current score: ${currentScore}
         `;
         
-        // Send session update with custom instructions
-        const updatePayload = JSON.stringify({
-            type: 'session.update',
-            session: {
-                instructions: gameInstructions,
-                modalities: ["audio", "text"],
-                voice: "alloy",
-                temperature: 0.7
-            }
-        });
+        try {
+            // Send session update with custom instructions
+            const updatePayload = JSON.stringify({
+                type: 'session.update',
+                session: {
+                    instructions: gameInstructions,
+                    modalities: ["audio", "text"],
+                    voice: "alloy",
+                    temperature: 0.7
+                }
+            });
+            
+            this.dataChannel.send(updatePayload);
+            console.log('Session instructions updated for VR Pong game');
+        } catch (error) {
+            console.error('Error updating session instructions:', error);
+        }
+    }
+    
+    // Send a text message through the data channel
+    async sendTextMessage(message) {
+        if (!this.isConnected || !this.dataChannel) {
+            console.error('Cannot send message: not connected');
+            this.updateStatus('Not connected - please reconnect');
+            return null;
+        }
         
-        this.dataChannel.send(updatePayload);
-        console.log('Session instructions updated for VR Pong game');
+        try {
+            console.log('Sending text message:', message);
+            
+            // Update UI
+            this.updateStatus(`User: ${message}`);
+            this.addMessage('user', message);
+            
+            // Format message according to OpenAI's WebRTC API requirements
+            const payload = JSON.stringify({
+                type: 'conversation.item.create',
+                item: {
+                    type: 'message',
+                    role: 'user',
+                    content: [{
+                        type: 'input_text', // User messages always use 'input_text' type
+                        text: message
+                    }]
+                }
+            });
+            
+            // Use the rate-limited message sender
+            const sent = await this.sendDataChannelMessage(payload);
+            
+            if (sent) {
+                console.log('Message sent successfully');
+                
+                // Request a response after sending the message
+                const responsePayload = JSON.stringify({
+                    type: 'response.create'
+                });
+                
+                setTimeout(() => {
+                    this.sendDataChannelMessage(responsePayload);
+                    console.log('Response request sent');
+                }, 500);
+                
+                return true;
+            }
+            
+            return false;
+        } catch (error) {
+            console.error('Error sending message:', error);
+            this.updateStatus(`Error sending message: ${error.message}`);
+            
+            // Try to reconnect if there's a connection issue
+            if (!this.isConnected || !this.dataChannel || this.dataChannel.readyState !== 'open') {
+                this.reconnect();
+            }
+            
+            return false;
+        }
     }
 }
 
