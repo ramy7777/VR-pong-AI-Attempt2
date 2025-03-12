@@ -1017,8 +1017,8 @@ class OpenAIVoiceAssistant {
     async sendGreeting() {
         console.log('Sending initial greeting...');
         
-        // Define greeting message with game-specific content - simplified for brevity
-        const greetingMessage = "Ready";
+        // Define greeting message with game-specific content - slightly more conversational
+        const greetingMessage = "Ready to play pong!";
         
         try {
             // Wait to ensure connection is stable
@@ -1077,25 +1077,35 @@ class OpenAIVoiceAssistant {
         
         switch (eventType) {
             case 'game_started':
-                updateMessage = "Game started";
+                updateMessage = "New game starting!";
                 break;
                 
             case 'game_ended':
                 if (this.gameState.playerScore > this.gameState.aiScore) {
-                    updateMessage = `Player won ${this.gameState.playerScore}-${this.gameState.aiScore}`;
+                    updateMessage = `Player won ${this.gameState.playerScore}-${this.gameState.aiScore}. Great match!`;
                 } else if (this.gameState.aiScore > this.gameState.playerScore) {
-                    updateMessage = `AI won ${this.gameState.aiScore}-${this.gameState.playerScore}`;
+                    updateMessage = `AI won ${this.gameState.aiScore}-${this.gameState.playerScore}. Better luck next time!`;
                 } else {
-                    updateMessage = `Tie ${this.gameState.playerScore}-${this.gameState.aiScore}`;
+                    updateMessage = `Tie game ${this.gameState.playerScore}-${this.gameState.aiScore}. Well played!`;
                 }
                 break;
                 
             case 'player_scored':
-                updateMessage = `Player scored ${this.gameState.playerScore}-${this.gameState.aiScore}`;
+                const playerScoreMessages = [
+                    `Player scored! ${this.gameState.playerScore}-${this.gameState.aiScore}`,
+                    `Nice shot! Score: ${this.gameState.playerScore}-${this.gameState.aiScore}`,
+                    `Point to player. ${this.gameState.playerScore}-${this.gameState.aiScore}`
+                ];
+                updateMessage = playerScoreMessages[Math.floor(Math.random() * playerScoreMessages.length)];
                 break;
                 
             case 'ai_scored':
-                updateMessage = `AI scored ${this.gameState.playerScore}-${this.gameState.aiScore}`;
+                const aiScoreMessages = [
+                    `AI scored. ${this.gameState.playerScore}-${this.gameState.aiScore}`,
+                    `Point to AI. ${this.gameState.playerScore}-${this.gameState.aiScore}`,
+                    `AI gets one! ${this.gameState.playerScore}-${this.gameState.aiScore}`
+                ];
+                updateMessage = aiScoreMessages[Math.floor(Math.random() * aiScoreMessages.length)];
                 break;
                 
             default:
@@ -1152,18 +1162,19 @@ class OpenAIVoiceAssistant {
             ? `${this.gameState.playerScore}-${this.gameState.aiScore}` 
             : 'No game';
         
-        // Custom instructions about the VR Pong game - extremely simplified for brevity
+        // Custom instructions about the VR Pong game - slightly more conversational
         const gameInstructions = `
-            You are a VR Pong game assistant. Be extremely brief.
+            You are a VR Pong game assistant. Be brief but personable.
             
-            CRITICAL RULES:
-            - Use 2 words or less for ALL responses
-            - Never use more than 2 words total
-            - No complete sentences
-            - No greetings or pleasantries
-            - Only essential gameplay tips
-            - No punctuation
-            - No articles (a, an, the)
+            GUIDELINES:
+            - Use 3-5 words for most responses
+            - You can occasionally use short phrases
+            - Be encouraging and supportive
+            - Use light humor when appropriate
+            - You can use minimal punctuation
+            - Focus on gameplay tips, reactions to points scored, and motivation
+            - Keep responses quick and easy to read during fast gameplay
+            - Avoid complex sentences or lengthy explanations
             
             Current score: ${currentScore}
         `;
@@ -1176,7 +1187,7 @@ class OpenAIVoiceAssistant {
                     instructions: gameInstructions,
                     modalities: ["audio", "text"],
                     voice: "alloy",
-                    temperature: 0.7
+                    temperature: 0.8
                 }
             });
             
@@ -1206,12 +1217,8 @@ class OpenAIVoiceAssistant {
             const payload = JSON.stringify({
                 type: 'conversation.item.create',
                 item: {
-                    type: 'message',
-                    role: 'user',
-                    content: [{
-                        type: 'input_text', // User messages always use 'input_text' type
-                        text: message
-                    }]
+                    type: 'input_text', // User messages always use 'input_text' type
+                    text: message
                 }
             });
             
