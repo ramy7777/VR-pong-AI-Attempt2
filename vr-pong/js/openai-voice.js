@@ -99,7 +99,8 @@ class OpenAIVoiceAssistant {
                 // Update UI
                 this.connectButton.textContent = 'Disconnect Voice Assistant';
                 this.updateStatus('Connected to voice assistant');
-                this.showTranscript();
+                // Don't show transcript anymore
+                // this.showTranscript();
                 
                 // Update session with custom VR Pong game instructions
                 setTimeout(() => this.updateSessionInstructions(), 2000);
@@ -394,7 +395,8 @@ class OpenAIVoiceAssistant {
             if (!isError) {
                 this.connectButton.textContent = 'Connect Voice Assistant';
                 this.updateStatus('Disconnected');
-                this.hideTranscript();
+                // Don't need to hide transcript anymore
+                // this.hideTranscript();
             }
             
         } catch (error) {
@@ -525,9 +527,13 @@ class OpenAIVoiceAssistant {
     }
     
     updateTranscript(text) {
-        if (this.transcriptElement) {
-            this.transcriptElement.textContent = text;
-        }
+        // Don't update the transcript element since we're not showing it
+        // if (this.transcriptElement) {
+        //     this.transcriptElement.textContent = text;
+        // }
+        
+        // Just log the transcript for debugging
+        console.log('Transcript update:', text);
     }
     
     showTranscript() {
@@ -544,33 +550,35 @@ class OpenAIVoiceAssistant {
     
     // Add a message to the transcript
     addMessage(role, text) {
-        if (!this.transcriptElement) return;
+        // Don't add messages to the transcript element since we're not showing it
+        // if (!this.transcriptElement) return;
+        // 
+        // // Create message element
+        // const messageDiv = document.createElement('div');
+        // messageDiv.classList.add('message', role);
+        // 
+        // // Create label
+        // const label = document.createElement('span');
+        // label.classList.add('label');
+        // label.textContent = role === 'user' ? 'You: ' : 'Assistant: ';
+        // 
+        // // Create text content
+        // const content = document.createElement('span');
+        // content.classList.add('content');
+        // content.textContent = text;
+        // 
+        // // Add to message
+        // messageDiv.appendChild(label);
+        // messageDiv.appendChild(content);
+        // 
+        // // Add to transcript
+        // this.transcriptElement.appendChild(messageDiv);
+        // 
+        // // Scroll to bottom
+        // this.transcriptElement.scrollTop = this.transcriptElement.scrollHeight;
         
-        // Create message element
-        const messageDiv = document.createElement('div');
-        messageDiv.classList.add('message', role);
-        
-        // Create label
-        const label = document.createElement('span');
-        label.classList.add('label');
-        label.textContent = role === 'user' ? 'You: ' : 'Assistant: ';
-        
-        // Create text content
-        const content = document.createElement('span');
-        content.classList.add('content');
-        content.textContent = text;
-        
-        // Add to message
-        messageDiv.appendChild(label);
-        messageDiv.appendChild(content);
-        
-        // Add to transcript
-        this.transcriptElement.appendChild(messageDiv);
-        
-        // Scroll to bottom
-        this.transcriptElement.scrollTop = this.transcriptElement.scrollHeight;
-        
-        console.log(`Added ${role} message to transcript: ${text}`);
+        // Just log the message for debugging
+        console.log(`${role} message: ${text}`);
     }
     
     // Send a text message through the data channel
