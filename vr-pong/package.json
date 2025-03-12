@@ -5,13 +5,24 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "build": "webpack --config webpack.config.js"
   },
   "dependencies": {
     "express": "^4.18.2",
     "selfsigned": "^2.4.1",
     "socket.io": "^4.8.1",
-    "socket.io-client": "^4.8.1"
+    "socket.io-client": "^4.8.1",
+    "@openai/realtime-api-beta": "github:openai/openai-realtime-api-beta",
+    "axios": "^1.6.7"
+  },
+  "devDependencies": {
+    "webpack": "^5.90.3",
+    "webpack-cli": "^5.1.4",
+    "buffer": "^6.0.3",
+    "stream-browserify": "^3.0.0",
+    "util": "^0.12.5",
+    "process": "^0.11.10"
   },
   "engines": {
     "node": ">=14.0.0"
