@@ -630,12 +630,22 @@ class OpenAIVoiceAssistant {
                     
                     // Then attempt to reconnect
                     await this.connect();
-                } catch (err) {
-                    console.error('Reconnection after data channel error failed:', err);
-                } finally {
+                    
+                    // Reset reconnection flag
                     this.isReconnecting = false;
+                } catch (reconnectError) {
+                    console.error('Failed to reconnect after data channel error:', reconnectError);
+                    this.updateStatus('Connection failed - please try again');
+                    this.isReconnecting = false;
+                    
+                    // If reconnection fails, wait longer before trying again
+                    setTimeout(() => {
+                        if (!this.isConnected && !this.isReconnecting) {
+                            this.connect();
+                        }
+                    }, 5000);
                 }
-            }, 2000);
+            }, 1000);
         }
     }
     
@@ -664,7 +674,8 @@ class OpenAIVoiceAssistant {
             const payload = JSON.stringify({
                 type: 'conversation.item.create',
                 item: {
-                    role: 'user',
+                    type: 'message',
+                    role: 'assistant',
                     content: [{
                         type: 'text',
                         text: greetingMessage
@@ -677,22 +688,18 @@ class OpenAIVoiceAssistant {
             
             // Request a response
             const responsePayload = JSON.stringify({
-                type: 'response.create',
-                modalities: ['text', 'audio']
+                type: 'response.create'
             });
             
+            // Wait a moment before requesting a response
             setTimeout(() => {
                 if (this.dataChannel && this.dataChannel.readyState === 'open') {
                     this.dataChannel.send(responsePayload);
-                    console.log('Response request for greeting sent');
                 }
             }, 500);
             
         } catch (error) {
             console.error('Error sending greeting:', error);
-            
-            // Schedule a retry
-            setTimeout(() => this.sendGreeting(), 10000);
         }
     }
     
