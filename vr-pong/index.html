@@ -80,6 +80,43 @@
             padding: 10px;
             font-family: Arial, sans-serif;
         }
+        /* OpenAI Voice Assistant Styles */
+        #voiceStatus {
+            position: absolute;
+            top: 70px;
+            left: 0;
+            right: 0;
+            text-align: center;
+            color: white;
+            font-family: Arial, sans-serif;
+        }
+        #openaiTranscript {
+            position: absolute;
+            bottom: 100px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 80%;
+            max-height: 200px;
+            overflow-y: auto;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+            font-family: Arial, sans-serif;
+            display: none;
+        }
+        #connectOpenAI {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            padding: 10px 15px;
+            background: #9C27B0;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
     </style>
     <!-- Include Socket.IO client library from CDN -->
     <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
@@ -108,6 +145,11 @@
         <p>Click and drag with the mouse to control the paddle</p>
     </div>
 
+    <!-- OpenAI Voice Assistant UI -->
+    <button id="connectOpenAI">Connect Voice Assistant</button>
+    <div id="voiceStatus">Voice assistant not connected</div>
+    <div id="openaiTranscript"></div>
+
     <script type="importmap">
     {
         "imports": {
@@ -117,6 +159,8 @@
         }
     }
     </script>
+    <!-- Include OpenAI Voice Assistant Scripts -->
+    <script src="js/openai-voice.js"></script>
     <script type="module">
         import { Game } from './js/game/Game.js';
         let game;
