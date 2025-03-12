@@ -101,6 +101,9 @@ class OpenAIVoiceAssistant {
                 this.updateStatus('Connected to voice assistant');
                 this.showTranscript();
                 
+                // Update session with custom VR Pong game instructions
+                setTimeout(() => this.updateSessionInstructions(), 2000);
+                
                 // Send the initial greeting message after a longer delay
                 setTimeout(() => this.sendGreeting(), 8000);
             } else {
@@ -292,6 +295,9 @@ class OpenAIVoiceAssistant {
                     this.handleTranscriptUpdate(data);
                 } else if (data.type === 'conversation.item.created') {
                     this.handleMessageUpdate(data);
+                } else if (data.type === 'session.created' || data.type === 'session.updated') {
+                    // When session is created or updated, set custom instructions
+                    this.updateSessionInstructions();
                 }
             } catch (error) {
                 console.error('Error processing data channel message:', error);
@@ -536,6 +542,37 @@ class OpenAIVoiceAssistant {
         }
     }
     
+    // Add a message to the transcript
+    addMessage(role, text) {
+        if (!this.transcriptElement) return;
+        
+        // Create message element
+        const messageDiv = document.createElement('div');
+        messageDiv.classList.add('message', role);
+        
+        // Create label
+        const label = document.createElement('span');
+        label.classList.add('label');
+        label.textContent = role === 'user' ? 'You: ' : 'Assistant: ';
+        
+        // Create text content
+        const content = document.createElement('span');
+        content.classList.add('content');
+        content.textContent = text;
+        
+        // Add to message
+        messageDiv.appendChild(label);
+        messageDiv.appendChild(content);
+        
+        // Add to transcript
+        this.transcriptElement.appendChild(messageDiv);
+        
+        // Scroll to bottom
+        this.transcriptElement.scrollTop = this.transcriptElement.scrollHeight;
+        
+        console.log(`Added ${role} message to transcript: ${text}`);
+    }
+    
     // Send a text message through the data channel
     async sendTextMessage(message) {
         if (!this.isConnected || !this.dataChannel) {
@@ -565,10 +602,10 @@ class OpenAIVoiceAssistant {
             }
             
             // Format message according to OpenAI's WebRTC API requirements
-            // Use 'conversation.item.create' type instead of 'text'
             const payload = JSON.stringify({
                 type: 'conversation.item.create',
                 item: {
+                    type: 'message',
                     role: 'user',
                     content: [{
                         type: 'text',
@@ -582,8 +619,7 @@ class OpenAIVoiceAssistant {
             
             // Request a response after sending the message
             const responsePayload = JSON.stringify({
-                type: 'response.create',
-                modalities: ['text', 'audio']
+                type: 'response.create'
             });
             
             setTimeout(() => {
@@ -653,8 +689,8 @@ class OpenAIVoiceAssistant {
     async sendGreeting() {
         console.log('Sending initial greeting...');
         
-        // Define greeting message
-        const greetingMessage = "Hello, I am your Pong VR game assistant. How can I help you today?";
+        // Define greeting message with game-specific content
+        const greetingMessage = "Hello! I'm your VR Pong game assistant. I can help you with game rules, controls, strategies, or any questions about the game. How can I assist you with your VR Pong experience today?";
         
         try {
             // Wait to ensure connection is stable
@@ -703,39 +739,60 @@ class OpenAIVoiceAssistant {
         }
     }
     
-    // Add a message to the transcript
-    addMessage(role, text) {
-        if (!this.transcriptElement) return;
+    // Update session with custom instructions about the VR Pong game
+    updateSessionInstructions() {
+        if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
+            console.log('Cannot update session instructions: data channel not ready');
+            return;
+        }
         
-        // Create message element
-        const messageDiv = document.createElement('div');
-        messageDiv.classList.add('message', role);
+        console.log('Updating session with VR Pong game instructions');
         
-        // Create label
-        const label = document.createElement('span');
-        label.classList.add('label');
-        label.textContent = role === 'user' ? 'You: ' : 'Assistant: ';
+        // Custom instructions about the VR Pong game
+        const gameInstructions = `
+            You are a specialized AI assistant for a VR Pong game. Your primary role is to help players understand and enjoy the game.
+            
+            Game Rules and Mechanics:
+            - This is a 3D virtual reality version of the classic Pong game
+            - Players use VR controllers to move paddles and hit a ball back and forth
+            - The game can be played in single-player mode against an AI opponent or multiplayer mode against other players
+            - Players score points when their opponent misses the ball
+            - The game features power-ups that can change ball speed, paddle size, or add special effects
+            - Players can customize their paddle appearance and game environment
+            
+            Game Controls:
+            - Move the VR controller to position the paddle
+            - The paddle follows the controller's position in 3D space
+            - Press trigger buttons for special actions or power-ups
+            - Use the menu button to access game settings
+            
+            Game Modes:
+            - Practice Mode: Play against an AI with adjustable difficulty
+            - Multiplayer Mode: Play against other players online
+            - Tournament Mode: Compete in structured competitions
+            
+            Focus exclusively on answering questions about the game, its rules, controls, strategies, and troubleshooting.
+            Be enthusiastic and encouraging to players, especially beginners.
+            If asked about topics unrelated to the VR Pong game, politely redirect the conversation back to the game.
+        `;
         
-        // Create text content
-        const content = document.createElement('span');
-        content.classList.add('content');
-        content.textContent = text;
+        // Send session update with custom instructions
+        const updatePayload = JSON.stringify({
+            type: 'session.update',
+            session: {
+                instructions: gameInstructions,
+                modalities: ["audio", "text"],
+                voice: "alloy",
+                temperature: 0.7
+            }
+        });
         
-        // Add to message
-        messageDiv.appendChild(label);
-        messageDiv.appendChild(content);
-        
-        // Add to transcript
-        this.transcriptElement.appendChild(messageDiv);
-        
-        // Scroll to bottom
-        this.transcriptElement.scrollTop = this.transcriptElement.scrollHeight;
-        
-        console.log(`Added ${role} message to transcript: ${text}`);
+        this.dataChannel.send(updatePayload);
+        console.log('Session instructions updated for VR Pong game');
     }
 }
 
 // Initialize the OpenAI voice assistant when the document is loaded
 document.addEventListener('DOMContentLoaded', () => {
     window.openAIVoice = new OpenAIVoiceAssistant();
-}); 
+});
