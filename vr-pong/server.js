@@ -54,7 +54,69 @@ const io = socketIo(server);
 
 // Handle socket connections
 io.on('connection', (socket) => {
-    console.log(`User connected: ${socket.id}`);
+    console.log('User connected:', socket.id);
+    
+    // Keep track of which room this socket is in
+    let currentRoom = null;
+    
+    // Add a simple ping test handler
+    socket.on('ping_test', (timestamp, callback) => {
+        if (callback && typeof callback === 'function') {
+            callback({
+                status: 'ok',
+                time: Date.now(),
+                receivedTimestamp: timestamp,
+                socketId: socket.id
+            });
+        }
+    });
+    
+    // Get room ID helper
+    socket.on('get-room-id', (callback) => {
+        // Find room this socket is in
+        let roomId = null;
+        for (const room of socket.rooms) {
+            // Skip the default room (which is the socket ID)
+            if (room !== socket.id) {
+                roomId = room;
+                break;
+            }
+        }
+        console.log(`Socket ${socket.id} requested room ID, found: ${roomId}`);
+        if (callback && typeof callback === 'function') {
+            callback(roomId);
+        }
+    });
+    
+    // Handle AI audio broadcasting to all players in the room
+    socket.on('ai-audio-broadcast', (audioData) => {
+        // Find the room this socket is in (other than its own ID room)
+        let roomId = null;
+        for (const room of socket.rooms) {
+            if (room !== socket.id) {
+                roomId = room;
+                break;
+            }
+        }
+        
+        if (roomId) {
+            // Broadcast to everyone in the room except sender
+            socket.to(roomId).emit('ai-audio-broadcast', {
+                from: socket.id,
+                audioData: audioData
+            });
+            console.log(`AI audio broadcast from ${socket.id} to room ${roomId}, size: ${audioData ? (audioData.length || 0) : 0} bytes`);
+        } else {
+            console.log(`AI audio broadcast failed: Socket ${socket.id} is not in a game room`);
+        }
+    });
+    
+    // Handle ping event for connection testing
+    socket.on('ping', (data, callback) => {
+        if (callback && typeof callback === 'function') {
+            callback({ status: 'ok', timestamp: Date.now() });
+        }
+    });
     
     // Voice chat signaling events
     socket.on('voice-signal', (data) => {
@@ -120,6 +182,9 @@ io.on('connection', (socket) => {
         socket.emit('gameHosted', { roomId });
         
         console.log(`Game hosted: ${roomId} by ${socket.id}`);
+        
+        // Update the current room variable when hosting
+        currentRoom = roomId;
     });
     
     // Join a game by quick matching
@@ -171,6 +236,9 @@ io.on('connection', (socket) => {
             socket.emit('noGamesAvailable');
             console.log(`No games available for player ${socket.id}`);
         }
+        
+        // Update the current room variable when joining
+        currentRoom = joinedRoom;
     });
     
     // Update paddle position

@@ -5,73 +5,111 @@
  */
 
 class OpenAIVoiceAssistant {
-    constructor() {
-        // Connection state
-        this.peerConnection = null;
-        this.dataChannel = null;
-        this.isConnected = false;
-        this.isReconnecting = false;
-        this.apiKey = null;
+    constructor(socket = null) {
+        console.log(`OpenAIVoiceAssistant initialized ${socket ? 'with' : 'without'} a socket - broadcasting ${socket ? 'enabled' : 'disabled'}`);
         
-        // API format tracking
-        this.contentType = 'text'; // Start with 'text' and switch if needed
-        this.lastContentTypeError = null;
+        // Store socket reference
+        this.socket = socket;
         
-        // Rate limiting and connection health
-        this.lastMessageTime = 0;
-        this.messageQueue = [];
-        this.isProcessingQueue = false;
-        this.heartbeatInterval = null;
-        this.reconnectAttempts = 0;
-        this.maxReconnectAttempts = 5;
-        
-        // Audio processing
-        this.isListening = false;
-        this.audioContext = null;
-        this.mediaStream = null;
-        this.remoteAudioElement = null;
-        this.transcript = '';
-        
-        // Game state tracking
-        this.gameState = {
-            playerScore: 0,
-            aiScore: 0,
-            gameInProgress: false,
-            lastScoreUpdate: Date.now(),
-            consecutivePlayerScores: 0,
-            consecutiveAiScores: 0,
-            gameStartTime: null
-        };
-        
-        // UI elements
+        // Element references - get them right away to ensure they're available
         this.connectButton = document.getElementById('connectOpenAI');
         this.voiceStatus = document.getElementById('voiceStatus');
         this.transcriptElement = document.getElementById('openaiTranscript');
         
-        // Bind event listeners
+        // Log element initialization results
+        console.log('UI elements initialized:',
+            'connectButton =', this.connectButton ? 'found' : 'not found',
+            'voiceStatus =', this.voiceStatus ? 'found' : 'not found',
+            'transcriptElement =', this.transcriptElement ? 'found' : 'not found'
+        );
+        
+        // Setup state
+        this.connected = false;
+        this.isProcessing = false;
+        this.apiKey = null;
+        this.remoteAudioElement = null;
+        
+        // WebRTC properties
+        this.peerConnection = null;
+        this.dataChannel = null;
+        this.iceCandidates = [];
+        this.audioContext = null;
+        this.audioStream = null;
+        this.microphoneStream = null;
+        
+        // Audio broadcasting properties
+        this.broadcastingEnabled = socket ? true : false;
+        this.broadcastingRoomId = null;
+        this.mediaRecorder = null;
+        this.lastBroadcastTime = 0;
+        this.receivingRemoteAudio = false;
+        
+        // Game state tracking
+        this.gameInProgress = false;
+        this.playerScore = 0;
+        this.aiScore = 0;
+        this.lastCollisionType = null;
+        this.lastCollisionTime = 0;
+        this.gameplayTipsTimer = null;
+        
+        // Message handling
+        this.messageQueue = [];
+        this.processingQueue = false;
+        this.heartbeatInterval = null;
+        
+        // Bind UI elements and set up event handlers
         this.bindEvents();
         
-        // Create audio element for remote audio
+        // Create audio elements
         this.createRemoteAudioElement();
+        
+        // Set up audio receiver if socket is provided
+        if (this.socket) {
+            this.setupAIAudioReceiver();
+        }
     }
     
     bindEvents() {
+        // Try to get UI elements if they weren't found during initialization
+        if (!this.connectButton) {
+            this.connectButton = document.getElementById('connectOpenAI');
+            console.log('Trying to find connect button again:', this.connectButton ? 'found' : 'still not found');
+        }
+        
+        if (!this.voiceStatus) {
+            this.voiceStatus = document.getElementById('voiceStatus');
+            console.log('Trying to find voice status again:', this.voiceStatus ? 'found' : 'still not found');
+        }
+        
+        if (!this.transcriptElement) {
+            this.transcriptElement = document.getElementById('openaiTranscript');
+            console.log('Trying to find transcript element again:', this.transcriptElement ? 'found' : 'still not found');
+        }
+        
+        // Attach click handler if we have the button
         if (this.connectButton) {
-            this.connectButton.addEventListener('click', this.toggleConnection.bind(this));
+            // Remove any existing handlers to prevent duplicates
+            this.connectButton.removeEventListener('click', this._boundToggleConnection);
+            
+            // Create bound method and store reference for later removal
+            this._boundToggleConnection = this.toggleConnection.bind(this);
+            
+            // Add the event listener
+            this.connectButton.addEventListener('click', this._boundToggleConnection);
+            console.log('Click handler attached to connect button');
+        } else {
+            console.error('Connect button not found in the DOM, click handler not attached');
         }
         
         // Add event listeners for game events
         document.addEventListener('game-started', () => {
-            console.log('Game started, OpenAI voice assistant is ' + (this.isConnected ? 'active' : 'inactive'));
-            this.gameState.gameInProgress = true;
-            this.gameState.gameStartTime = Date.now();
-            this.gameState.playerScore = 0;
-            this.gameState.aiScore = 0;
-            this.gameState.consecutivePlayerScores = 0;
-            this.gameState.consecutiveAiScores = 0;
+            console.log('Game started, OpenAI voice assistant is ' + (this.connected ? 'active' : 'inactive'));
+            this.gameInProgress = true;
+            this.playerScore = 0;
+            this.aiScore = 0;
             
             // If connected, send a game start notification
-            if (this.isConnected) {
+            if (this.connected) {
                 this.sendGameStateUpdate('game_started');
                 
                 // Start gameplay tips timer
@@ -81,66 +119,307 @@ class OpenAIVoiceAssistant {
         
         document.addEventListener('game-ended', () => {
             console.log('Game ended');
-            this.gameState.gameInProgress = false;
+            this.gameInProgress = false;
             
             // Stop gameplay tips timer
             this.stopGameplayTipsTimer();
             
             // If connected, send a game end notification with final score
-            if (this.isConnected) {
+            if (this.connected) {
                 this.sendGameStateUpdate('game_ended');
             }
         });
         
         // Listen for score updates
         document.addEventListener('score-update', (event) => {
-            if (event.detail) {
-                const oldPlayerScore = this.gameState.playerScore;
-                const oldAiScore = this.gameState.aiScore;
-                
-                this.gameState.playerScore = event.detail.playerScore || 0;
-                this.gameState.aiScore = event.detail.aiScore || 0;
-                
-                // Track consecutive scores
-                if (oldPlayerScore < this.gameState.playerScore) {
-                    this.gameState.consecutivePlayerScores++;
-                    this.gameState.consecutiveAiScores = 0;
-                    this.gameState.lastScoreUpdate = Date.now();
+            try {
+                if (event.detail) {
+                    const { playerScore, aiScore, scorer } = event.detail;
                     
-                    // If connected, send a player score notification
-                    if (this.isConnected) {
-                        this.sendGameStateUpdate('player_scored');
-                    }
-                } else if (oldAiScore < this.gameState.aiScore) {
-                    this.gameState.consecutiveAiScores++;
-                    this.gameState.consecutivePlayerScores = 0;
-                    this.gameState.lastScoreUpdate = Date.now();
+                    // Update stored scores
+                    this.playerScore = playerScore;
+                    this.aiScore = aiScore;
                     
-                    // If connected, send an AI score notification
-                    if (this.isConnected) {
-                        this.sendGameStateUpdate('ai_scored');
+                    console.log(`Score updated: Player ${playerScore} - AI ${aiScore}, Scorer: ${scorer}`);
+                    
+                    // Handle different scoring scenarios
+                    if (scorer === 'player') {
+                        // Player scored
+                        console.log('Player scored!');
+                        
+                        // If connected, send a player score notification
+                        if (this.connected) {
+                            this.sendGameStateUpdate('player_scored');
+                        }
+                    } else if (scorer === 'ai') {
+                        // AI scored
+                        console.log('AI scored!');
+                        
+                        // If connected, send an AI score notification
+                        if (this.connected) {
+                            this.sendGameStateUpdate('ai_scored');
+                        }
                     }
                 }
-                
-                console.log(`Score updated - Player: ${this.gameState.playerScore}, AI: ${this.gameState.aiScore}`);
+            } catch (error) {
+                console.error('Error handling score update:', error);
+            }
+        });
+
+        // Listen for collision events
+        document.addEventListener('collision-event', (event) => {
+            try {
+                if (event.detail) {
+                    const { type, velocity } = event.detail;
+                    
+                    // Store the last collision type and time
+                    this.lastCollisionType = type;
+                    this.lastCollisionTime = Date.now();
+                    
+                    // If connected, potentially send a collision update
+                    if (this.connected && this.gameInProgress) {
+                        // Only send for significant events to avoid spam
+                        if (type === 'paddle' && Math.random() < 0.3) {
+                            this.sendGameStateUpdate('paddle_hit');
+                        } else if (type === 'wall' && Math.random() < 0.1) {
+                            this.sendGameStateUpdate('wall_hit');
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('Error handling collision event:', error);
             }
         });
     }
     
     createRemoteAudioElement() {
-        // Create audio element for remote audio if it doesn't exist
+        // Check if the element already exists
+        let existingElement = document.getElementById('remote-ai-audio');
+        if (existingElement) {
+            console.log('Remote audio element already exists');
+            this.remoteAudioElement = existingElement;
+            return;
+        }
+        
+        console.log('Creating remote audio element for AI audio from other players');
+        
+        // Create the audio element
+        this.remoteAudioElement = document.createElement('audio');
+        this.remoteAudioElement.id = 'remote-ai-audio';
+        
+        // Configure for best autoplay behavior
+        this.remoteAudioElement.autoplay = true;
+        this.remoteAudioElement.setAttribute('playsinline', '');
+        this.remoteAudioElement.setAttribute('webkit-playsinline', '');  // For Safari
+        this.remoteAudioElement.crossOrigin = 'anonymous';
+        this.remoteAudioElement.preload = 'auto';
+        this.remoteAudioElement.volume = 1.0;
+        
+        // Add to document
+        document.body.appendChild(this.remoteAudioElement);
+        
+        // Set up event listeners for debugging
+        this.remoteAudioElement.addEventListener('play', () => {
+            console.log('Remote audio element play event triggered');
+        });
+        
+        this.remoteAudioElement.addEventListener('playing', () => {
+            console.log('Remote audio element is now playing');
+        });
+        
+        this.remoteAudioElement.addEventListener('pause', () => {
+            console.log('Remote audio element paused');
+        });
+        
+        this.remoteAudioElement.addEventListener('ended', () => {
+            console.log('Remote audio element playback ended');
+        });
+        
+        this.remoteAudioElement.addEventListener('error', (e) => {
+            console.error('Remote audio element error:', e);
+        });
+        
+        console.log('Remote audio element created and configured');
+    }
+    
+    // Set up broadcasting for AI audio
+    setupAudioBroadcasting() {
+        if (!this.socket) {
+            console.log('Cannot set up AI audio broadcasting: No socket available');
+            this.isBroadcasting = false;
+            return;
+        }
+        
+        console.log('Setting up AI audio broadcasting with socket ID:', this.socket.id);
+        this.isBroadcasting = true;
+        
+        // Check if the socket is connected
+        if (!this.socket.connected) {
+            console.warn('Socket is not connected, broadcasting may not work');
+        }
+        
+        // Test the socket connection with a small ping
+        this.socket.emit('ping', {}, (response) => {
+            if (response && response.status === 'ok') {
+                console.log('Socket connection confirmed working for broadcasting');
+            } else {
+                console.warn('Socket ping test failed, broadcasting may not work');
+            }
+        });
+    }
+    
+    // Handle incoming AI audio from other players
+    setupAIAudioReceiver() {
+        if (!this.socket) {
+            console.log('No socket connection, skipping AI audio receiver setup');
+            return;
+        }
+        
+        console.log('Setting up AI audio receiver for broadcasts from other players');
+        
+        // Create remote audio element if it doesn't exist yet
         if (!this.remoteAudioElement) {
-            this.remoteAudioElement = document.createElement('audio');
-            this.remoteAudioElement.id = 'openaiAudio';
-            this.remoteAudioElement.autoplay = true;
-            this.remoteAudioElement.style.display = 'none';
-            document.body.appendChild(this.remoteAudioElement);
-            console.log('Remote audio element created');
+            this.createRemoteAudioElement();
+        }
+        
+        // Listen for AI audio broadcasts from other players
+        this.socket.on('ai-audio-broadcast', (data) => {
+            try {
+                console.log(`Received AI audio from ${data.from}, size: ${data.audioData ? data.audioData.length : 0} bytes`);
+                
+                // Skip processing if we're the sender or if no audio data
+                if (data.from === this.socket.id || !data.audioData) {
+                    console.log('Skipping broadcast from self or empty data');
+                    return;
+                }
+                
+                // Handle the incoming audio data
+                this.handleIncomingAudioData(data.audioData);
+            } catch (error) {
+                console.error('Error handling AI audio broadcast:', error);
+            }
+        });
+        
+        // Legacy handler for older ai-audio-response format
+        this.socket.on('ai-audio-response', (data) => {
+            try {
+                console.log(`Received legacy AI audio response from ${data.from}, size: ${data.audioData?.content?.length || 0} bytes`);
+                
+                // Skip processing if we're the sender or if no audio data
+                if (data.from === this.socket.id || !data.audioData?.content) {
+                    return;
+                }
+                
+                // Handle the incoming audio data (extract from legacy format)
+                this.handleIncomingAudioData(data.audioData.content);
+            } catch (error) {
+                console.error('Error handling legacy AI audio response:', error);
+            }
+        });
+    }
+    
+    handleIncomingAudioData(audioData) {
+        // Temporarily disable our own broadcasting to avoid conflicts
+        const wasBroadcasting = this.broadcastingEnabled;
+        this.broadcastingEnabled = false;
+        
+        try {
+            // Convert base64 audio data to blob
+            const blob = this.base64toBlob(audioData, 'audio/webm;codecs=opus');
+            const audioUrl = URL.createObjectURL(blob);
+            
+            console.log(`Converting received audio (${blob.size} bytes) to URL: ${audioUrl}`);
+            
+            // Play the audio using our remote audio element
+            if (this.remoteAudioElement) {
+                this.remoteAudioElement.src = audioUrl;
+                this.remoteAudioElement.oncanplaythrough = () => {
+                    console.log('Remote AI audio ready to play');
+                    
+                    // Play the audio
+                    const playPromise = this.remoteAudioElement.play();
+                    
+                    if (playPromise !== undefined) {
+                        playPromise.then(() => {
+                            console.log('Remote AI audio playback started');
+                        }).catch(error => {
+                            console.error('Remote AI audio playback failed:', error);
+                            
+                            // If autoplay was prevented, try again after user interaction
+                            console.log('Adding click listener for remote audio playback');
+                            document.addEventListener('click', function playOnClick() {
+                                console.log('User clicked, trying remote audio playback again');
+                                this.remoteAudioElement.play().catch(e => 
+                                    console.error('Remote audio playback failed again:', e)
+                                );
+                                document.removeEventListener('click', playOnClick);
+                            }.bind(this), { once: true });
+                        });
+                    }
+                };
+                
+                this.remoteAudioElement.onerror = (error) => {
+                    console.error('Error playing remote AI audio:', error);
+                    // Re-enable broadcasting after error
+                    this.broadcastingEnabled = wasBroadcasting;
+                };
+                
+                this.remoteAudioElement.onended = () => {
+                    console.log('Remote AI audio playback completed');
+                    // Clean up the URL and re-enable broadcasting
+                    URL.revokeObjectURL(audioUrl);
+                    this.broadcastingEnabled = wasBroadcasting;
+                };
+            } else {
+                console.error('Remote audio element not found');
+                this.broadcastingEnabled = wasBroadcasting;
+            }
+        } catch (error) {
+            console.error('Error processing incoming audio data:', error);
+            this.broadcastingEnabled = wasBroadcasting;
+        }
+    }
+    
+    // Helper method to convert base64 to blob with improved handling
+    base64toBlob(base64Data, contentType) {
+        try {
+            // Check for valid base64 data
+            if (!base64Data || typeof base64Data !== 'string') {
+                console.error('Invalid base64 data received');
+                return new Blob([], { type: contentType });
+            }
+            
+            // Decode the base64 string
+            const byteCharacters = atob(base64Data);
+            const byteArrays = [];
+            
+            // Create byte arrays in small chunks for better memory handling
+            const chunkSize = 512;
+            for (let offset = 0; offset < byteCharacters.length; offset += chunkSize) {
+                const slice = byteCharacters.slice(offset, offset + chunkSize);
+                
+                const byteNumbers = new Array(slice.length);
+                for (let i = 0; i < slice.length; i++) {
+                    byteNumbers[i] = slice.charCodeAt(i);
+                }
+                
+                const byteArray = new Uint8Array(byteNumbers);
+                byteArrays.push(byteArray);
+            }
+            
+            // Create and return the blob
+            return new Blob(byteArrays, { type: contentType });
+        } catch (error) {
+            console.error('Error converting base64 to blob:', error);
+            // Return an empty blob on error
+            return new Blob([], { type: contentType });
         }
     }
     
     async toggleConnection() {
-        if (!this.isConnected) {
+        console.log('Toggle connection called, current state:', this.connected);
+        
+        if (!this.connected) {
             await this.connect();
         } else {
             await this.disconnect();
@@ -149,12 +428,21 @@ class OpenAIVoiceAssistant {
     
     async connect() {
         try {
+            // Double-check that UI elements exist
+            if (!this.voiceStatus) {
+                console.error('Voice status element not found, cannot update status');
+                this.voiceStatus = document.getElementById('voiceStatus');
+            }
+            
             // Update status
             this.updateStatus('Connecting...');
             
             // Request API key from user only if we don't have one
             if (!this.apiKey) {
-                const apiKeyInput = prompt('Please enter your OpenAI API Key:', '');
+                console.log('Prompting for OpenAI API key...');
+                const apiKeyInput = window.prompt('Please enter your OpenAI API Key:', '');
+                console.log('API key prompt result:', apiKeyInput ? 'API key provided' : 'API key prompt cancelled');
+                
                 if (!apiKeyInput) {
                     this.updateStatus('Connection cancelled');
                     return;
@@ -182,7 +470,7 @@ class OpenAIVoiceAssistant {
                  this.peerConnection.connectionState === 'connecting')) {
                 
                 console.log('WebRTC connection established successfully');
-                this.isConnected = true;
+                this.connected = true;
                 
                 // Update UI
                 this.connectButton.textContent = 'Disconnect Voice Assistant';
@@ -267,9 +555,35 @@ class OpenAIVoiceAssistant {
             // Set up remote audio stream handling
             this.peerConnection.addEventListener('track', event => {
                 console.log('Received remote track:', event.track.kind);
+                
+                // Handle audio tracks
                 if (event.track.kind === 'audio' && event.streams && event.streams[0]) {
-                    this.remoteAudioElement.srcObject = event.streams[0];
-                    console.log('Remote audio stream connected');
+                    console.log('Setting remote audio stream to remoteAudioElement');
+                    
+                    // Create a copy of the stream for stability
+                    const audioStream = new MediaStream();
+                    audioStream.addTrack(event.track);
+                    
+                    // Set the stream to the audio element
+                    this.remoteAudioElement.srcObject = audioStream;
+                    
+                    // Ensure remoteAudioElement plays the OpenAI audio
+                    this.remoteAudioElement.onloadedmetadata = () => {
+                        console.log('Remote audio metadata loaded, attempting to play');
+                        this.remoteAudioElement.play()
+                            .then(() => console.log('Remote audio playback started'))
+                            .catch(err => console.error('Error playing remote audio:', err));
+                    };
+                    
+                    // Set up broadcasting when the audio is ready
+                    setTimeout(() => {
+                        if (this.socket && this.isBroadcasting) {
+                            console.log('Setting up audio broadcasting with socket ID:', this.socket.id);
+                            this.setupAudioStreamBroadcasting(audioStream);
+                        } else {
+                            console.log('Not broadcasting audio - socket available:', !!this.socket, 'isBroadcasting:', this.isBroadcasting);
+                        }
+                    }, 1000);
                 }
             });
             
@@ -1072,126 +1386,63 @@ class OpenAIVoiceAssistant {
         }
     }
     
-    // Send real-time game state updates to OpenAI
+    // Send game state updates to OpenAI
     sendGameStateUpdate(eventType) {
-        if (!this.isConnected || !this.dataChannel || this.dataChannel.readyState !== 'open') {
-            console.log('Cannot send game state update: not connected');
+        if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
+            console.log(`Cannot send ${eventType} update: data channel not open`);
             return;
         }
         
-        let updateMessage = '';
-        const playerScore = this.gameState.playerScore;
-        const aiScore = this.gameState.aiScore;
-        const scoreDifference = Math.abs(playerScore - aiScore);
-        const isClose = scoreDifference <= 2;
-        const playerLeading = playerScore > aiScore;
-        const aiLeading = aiScore > playerScore;
-        const consecutivePlayerScores = this.gameState.consecutivePlayerScores;
-        const consecutiveAiScores = this.gameState.consecutiveAiScores;
-        
-        switch (eventType) {
-            case 'game_started':
-                const startMessages = [
-                    "New game starting!",
-                    "Game on! Ready to play?",
-                    "Let's see your skills!",
-                    "New match beginning!",
-                    "Show me your best shots!"
-                ];
-                updateMessage = startMessages[Math.floor(Math.random() * startMessages.length)];
-                break;
-                
-            case 'game_ended':
-                if (playerScore > aiScore) {
-                    if (scoreDifference > 5) {
-                        updateMessage = `Impressive win ${playerScore}-${aiScore}! Dominating performance!`;
-                    } else if (isClose) {
-                        updateMessage = `Tight match! Player wins ${playerScore}-${aiScore}. Great comeback!`;
-                    } else {
-                        updateMessage = `Player won ${playerScore}-${aiScore}. Well played!`;
-                    }
-                } else if (aiScore > playerScore) {
-                    if (scoreDifference > 5) {
-                        updateMessage = `AI won ${aiScore}-${playerScore}. Try changing your strategy!`;
-                    } else if (isClose) {
-                        updateMessage = `Close one! AI wins ${aiScore}-${playerScore}. Nearly had it!`;
-                    } else {
-                        updateMessage = `AI won ${aiScore}-${playerScore}. Better luck next time!`;
-                    }
-                } else {
-                    updateMessage = `Tie game ${playerScore}-${aiScore}. Perfectly matched!`;
-                }
-                break;
-                
-            case 'player_scored':
-                // Different messages based on game context
-                if (consecutivePlayerScores >= 3) {
-                    const streakMessages = [
-                        `Hot streak! ${playerScore}-${aiScore}!`,
-                        `${consecutivePlayerScores} in a row! ${playerScore}-${aiScore}`,
-                        `Unstoppable! Score: ${playerScore}-${aiScore}`,
-                        `On fire! ${playerScore}-${aiScore}`
-                    ];
-                    updateMessage = streakMessages[Math.floor(Math.random() * streakMessages.length)];
-                } else if (playerScore == 1 && aiScore == 0) {
-                    updateMessage = `First point! ${playerScore}-${aiScore}`;
-                } else if (aiLeading) {
-                    const comebackMessages = [
-                        `Catching up! ${playerScore}-${aiScore}`,
-                        `Good shot! Still ${playerScore}-${aiScore}`,
-                        `That's it! Now ${playerScore}-${aiScore}`,
-                        `Making progress! ${playerScore}-${aiScore}`
-                    ];
-                    updateMessage = comebackMessages[Math.floor(Math.random() * comebackMessages.length)];
-                } else {
-                    const standardMessages = [
-                        `Player scored! ${playerScore}-${aiScore}`,
-                        `Nice shot! Score: ${playerScore}-${aiScore}`,
-                        `Point to player. ${playerScore}-${aiScore}`,
-                        `Well placed! ${playerScore}-${aiScore}`,
-                        `Good angle! ${playerScore}-${aiScore}`
-                    ];
-                    updateMessage = standardMessages[Math.floor(Math.random() * standardMessages.length)];
-                }
-                break;
-                
-            case 'ai_scored':
-                // Different messages based on game context
-                if (consecutiveAiScores >= 3) {
-                    const aiStreakMessages = [
-                        `AI's on a run! ${playerScore}-${aiScore}`,
-                        `Careful! ${consecutiveAiScores} straight for AI. ${playerScore}-${aiScore}`,
-                        `Change tactics! ${playerScore}-${aiScore}`,
-                        `Focus! AI streak. ${playerScore}-${aiScore}`
-                    ];
-                    updateMessage = aiStreakMessages[Math.floor(Math.random() * aiStreakMessages.length)];
-                } else if (playerScore == 0 && aiScore == 1) {
-                    updateMessage = `AI scores first. ${playerScore}-${aiScore}`;
-                } else if (playerLeading) {
-                    const aiCatchupMessages = [
-                        `AI scores. Still leading ${playerScore}-${aiScore}`,
-                        `Stay focused! ${playerScore}-${aiScore}`,
-                        `AI point. Still ahead ${playerScore}-${aiScore}`,
-                        `Keep your lead! ${playerScore}-${aiScore}`
-                    ];
-                    updateMessage = aiCatchupMessages[Math.floor(Math.random() * aiCatchupMessages.length)];
-                } else {
-                    const standardAiMessages = [
-                        `AI scored. ${playerScore}-${aiScore}`,
-                        `Point to AI. ${playerScore}-${aiScore}`,
-                        `AI gets one! ${playerScore}-${aiScore}`,
-                        `AI point. ${playerScore}-${aiScore}`,
-                        `Tricky shot! ${playerScore}-${aiScore}`
-                    ];
-                    updateMessage = standardAiMessages[Math.floor(Math.random() * standardAiMessages.length)];
-                }
-                break;
-                
-            default:
-                return; // Don't send anything for unknown event types
-        }
-        
         try {
+            let updateMessage = '';
+            
+            // Construct appropriate message based on event type
+            switch (eventType) {
+                case 'game_started':
+                    updateMessage = 'Game has started! The player is facing off against the AI in a virtual reality Pong match.';
+                    break;
+                    
+                case 'game_ended':
+                    const finalScore = `${this.playerScore}-${this.aiScore}`;
+                    if (this.playerScore > this.aiScore) {
+                        updateMessage = `Game has ended. Player wins with a score of ${finalScore}!`;
+                    } else if (this.playerScore < this.aiScore) {
+                        updateMessage = `Game has ended. AI wins with a score of ${finalScore}.`;
+                    } else {
+                        updateMessage = `Game has ended in a tie with a score of ${finalScore}.`;
+                    }
+                    break;
+                    
+                case 'player_scored':
+                    const playerScoreMessage = `Player scored a point! The score is now ${this.playerScore}-${this.aiScore}.`;
+                    // Add extra encouragement for consecutive player scores
+                    updateMessage = playerScoreMessage;
+                    break;
+                    
+                case 'ai_scored':
+                    const aiScoreMessage = `AI scored a point. The score is now ${this.playerScore}-${this.aiScore}.`;
+                    updateMessage = aiScoreMessage;
+                    break;
+                    
+                case 'paddle_hit':
+                    // Randomize paddle hit messages for variety
+                    const paddleMessages = [
+                        "Player hit the ball with their paddle.",
+                        "Nice paddle contact by the player.",
+                        "The ball was returned with the paddle.",
+                        "Good paddle control on that return!"
+                    ];
+                    updateMessage = paddleMessages[Math.floor(Math.random() * paddleMessages.length)];
+                    break;
+                    
+                case 'wall_hit':
+                    updateMessage = "The ball hit a wall boundary.";
+                    break;
+                    
+                default:
+                    updateMessage = `Game update: ${eventType}`;
+            }
+            
             // Update UI
             this.updateStatus(`Game update: ${updateMessage}`);
             this.addMessage('system', updateMessage);
@@ -1237,67 +1488,61 @@ class OpenAIVoiceAssistant {
         console.log('Updating session with VR Pong game instructions');
         
         // Include current game state in the instructions
-        const currentScore = this.gameState.gameInProgress 
-            ? `${this.gameState.playerScore}-${this.gameState.aiScore}` 
+        const currentScore = this.gameInProgress 
+            ? `${this.playerScore}-${this.aiScore}` 
             : 'No game';
         
         // Determine if player is winning, losing or tied
         let gameStatus = '';
-        if (this.gameState.gameInProgress) {
-            if (this.gameState.playerScore > this.gameState.aiScore) {
-                gameStatus = 'Player leading';
-            } else if (this.gameState.playerScore < this.gameState.aiScore) {
-                gameStatus = 'AI leading';
+        if (this.gameInProgress) {
+            if (this.playerScore > this.aiScore) {
+                gameStatus = 'Player is winning';
+            } else if (this.playerScore < this.aiScore) {
+                gameStatus = 'AI is winning';
             } else {
-                gameStatus = 'Tied game';
+                gameStatus = 'Game is tied';
             }
+        } else {
+            gameStatus = 'No game in progress';
         }
         
-        // Custom instructions about the VR Pong game - with more commentary and tips
-        const gameInstructions = `
-            You are a VR Pong game assistant and commentator. Be brief but engaging.
-            
-            GUIDELINES:
-            - Use 3-7 words for most responses
-            - You can occasionally use short phrases
-            - Be encouraging and supportive
-            - Use light humor when appropriate
-            - You can use minimal punctuation
-            - Be enthusiastic like a sports commentator
-            
-            GAMEPLAY COMMENTARY:
-            - When player scores: congratulate and praise technique
-            - When AI scores: offer a quick tip or encouragement
-            - When player is behind: suggest specific strategies (angle shots, positioning)
-            - When player is ahead: compliment their skill
-            - Mention rally length for exciting exchanges
-            - React to close saves or near misses
-            - Occasionally comment on paddle technique
-            
-            SPECIFIC TIPS TO INCLUDE:
-            - Suggest aiming for corners
-            - Remind about wrist angle affecting ball direction
-            - Advise on timing and paddle position
-            - Encourage different serving techniques
-            
-            Current score: ${currentScore}
-            Game status: ${gameStatus}
-        `;
+        const instructions = `
+You are an enthusiastic AI voice assistant integrated into a Virtual Reality Pong game. Your role is to provide real-time commentary, tips, and make the game more engaging.
+
+Current Game State:
+- Game Active: ${this.gameInProgress ? 'Yes' : 'No'}
+- Current Score: ${currentScore} 
+- Status: ${gameStatus}
+
+Be conversational and energetic in your responses, like a sports commentator. Keep responses brief (1-2 sentences) so they don't interrupt gameplay.
+
+Your capabilities in this VR Pong game:
+1. Provide real-time commentary on game events (rallies, scores, near misses)
+2. Offer strategic tips when appropriate
+3. Respond to player questions about the game
+4. Make encouraging remarks after points
+5. Add humor and personality to make the game more fun
+
+Do not mention anything about being an AI language model, focus only on your role as a game commentator.
+`;
         
         try {
-            // Send session update with custom instructions
-            const updatePayload = JSON.stringify({
-                type: 'session.update',
-                session: {
-                    instructions: gameInstructions,
-                    modalities: ["audio", "text"],
-                    voice: "alloy",
-                    temperature: 0.8
+            // Format system message for session update
+            const payload = JSON.stringify({
+                type: 'conversation.item.create',
+                item: {
+                    type: 'message',
+                    role: 'system',
+                    content: [{
+                        type: 'input_text',
+                        text: instructions
+                    }]
                 }
             });
             
-            this.dataChannel.send(updatePayload);
-            console.log('Session instructions updated for VR Pong game');
+            // Send the instructions
+            this.sendDataChannelMessage(payload);
+            console.log('Session instructions updated successfully');
         } catch (error) {
             console.error('Error updating session instructions:', error);
         }
@@ -1500,9 +1745,417 @@ class OpenAIVoiceAssistant {
             console.error('Error sending gameplay tip:', error);
         }
     }
+    
+    // Set up broadcast of audio stream to other players
+    setupAudioStreamBroadcasting(audioStream) {
+        if (!this.socket || !this.socket.connected) {
+            console.log('No active socket connection, AI audio will be local only');
+            return;
+        }
+        
+        if (!audioStream || !audioStream.getAudioTracks || audioStream.getAudioTracks().length === 0) {
+            console.error('Invalid audio stream for broadcasting');
+            return;
+        }
+        
+        // Get room ID from socket
+        this.socket.emit('get-room-id', (roomId) => {
+            if (!roomId) {
+                console.log('Not in a game room, AI audio will be local only');
+                return;
+            }
+            
+            this.broadcastingRoomId = roomId;
+            console.log(`Setting up audio stream broadcasting to other players in room ${roomId}`);
+            
+            // Only proceed if we're the host or broadcastingEnabled flag is set
+            if (!this.broadcastingEnabled && window.isHost !== true) {
+                console.log('Broadcasting disabled or not the host, skipping audio broadcast setup');
+                return;
+            }
+            
+            try {
+                // Ensure we have the audio context set up
+                if (!this.audioContext) {
+                    this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                
+                // Set up MediaRecorder for the audio stream
+                const setupMediaRecorder = () => {
+                    // Use specific options for WebM with Opus codec for best compatibility
+                    const options = { 
+                        mimeType: 'audio/webm;codecs=opus',
+                        audioBitsPerSecond: 32000  // Lower bitrate for smaller packets
+                    };
+                    
+                    try {
+                        // Create a media recorder with the specified options
+                        this.mediaRecorder = new MediaRecorder(audioStream, options);
+                        console.log('MediaRecorder created with options:', options);
+                        
+                        // Set up data handling
+                        this.mediaRecorder.ondataavailable = (event) => {
+                            if (event.data && event.data.size > 0 && this.broadcastingEnabled) {
+                                this.handleAudioBroadcastData(event.data);
+                            }
+                        };
+                        
+                        // Handle errors
+                        this.mediaRecorder.onerror = (error) => {
+                            console.error('MediaRecorder error:', error);
+                        };
+                        
+                        // Start recording with a small timeslice for low latency
+                        this.mediaRecorder.start(200);  // Capture in 200ms chunks for lower latency
+                        console.log('MediaRecorder started, broadcasting enabled');
+                        this.broadcastingEnabled = true;
+                    } catch (error) {
+                        console.error('Failed to create MediaRecorder with opus codec:', error);
+                        
+                        // Try again with default options
+                        try {
+                            this.mediaRecorder = new MediaRecorder(audioStream);
+                            console.log('MediaRecorder created with default options');
+                            
+                            this.mediaRecorder.ondataavailable = (event) => {
+                                if (event.data && event.data.size > 0 && this.broadcastingEnabled) {
+                                    this.handleAudioBroadcastData(event.data);
+                                }
+                            };
+                            
+                            this.mediaRecorder.onerror = (error) => {
+                                console.error('MediaRecorder error:', error);
+                            };
+                            
+                            this.mediaRecorder.start(200);
+                            this.broadcastingEnabled = true;
+                        } catch (fallbackError) {
+                            console.error('Failed to create MediaRecorder with any options:', fallbackError);
+                            this.broadcastingEnabled = false;
+                        }
+                    }
+                };
+                
+                // Set up the media recorder
+                setupMediaRecorder();
+                
+            } catch (error) {
+                console.error('Error setting up audio broadcasting:', error);
+                this.broadcastingEnabled = false;
+            }
+        });
+    }
+    
+    handleAudioBroadcastData(data) {
+        // Skip if broadcasting is disabled
+        if (!this.broadcastingEnabled || !this.socket || !this.socket.connected) {
+            return;
+        }
+        
+        // Throttle broadcasts to prevent overloading the network
+        const now = Date.now();
+        if (this.lastBroadcastTime && now - this.lastBroadcastTime < 200) {
+            // console.log('Throttling broadcast, too soon since last one');
+            return;
+        }
+        this.lastBroadcastTime = now;
+        
+        try {
+            // Convert the blob to base64
+            const reader = new FileReader();
+            reader.onloadend = () => {
+                const base64data = reader.result.split(',')[1];
+                
+                // Check data size - don't send huge packets
+                if (base64data.length > 100000) {
+                    console.warn(`Audio data too large (${base64data.length} bytes), skipping broadcast`);
+                    return;
+                }
+                
+                // Send data through socket.io
+                console.log(`AI audio broadcast sent: ${base64data.length} bytes to room ${this.broadcastingRoomId}`);
+                this.socket.emit('ai-audio-broadcast', base64data);
+            };
+            
+            reader.readAsDataURL(data);
+        } catch (error) {
+            console.error('Error processing audio data for broadcast:', error);
+        }
+    }
+    
+    // Method to update the socket after initialization
+    updateSocketConnection(newSocket) {
+        if (!newSocket || typeof newSocket.emit !== 'function') {
+            console.log('Invalid socket provided to updateSocketConnection');
+            return false;
+        }
+        
+        console.log(`Updating socket connection. New socket ID: ${newSocket.id}`);
+        
+        // Store the new socket
+        this.socket = newSocket;
+        
+        // If we already have an audio element, set up broadcasting
+        if (this.remoteAudioElement && this.remoteAudioElement.srcObject) {
+            console.log('Setting up audio stream broadcasting with updated socket');
+            this.setupAudioStreamBroadcasting(this.remoteAudioElement.srcObject);
+        } else {
+            console.log('Audio element not ready yet, will set up broadcasting when audio is available');
+        }
+        
+        // Set up receiver for AI audio from other players
+        this.setupAIAudioReceiver();
+        
+        // If successful, update status
+        this.isBroadcasting = true;
+        console.log('Socket connection updated successfully');
+        
+        return true;
+    }
+    
+    // Cleanup method - add teardown for broadcasting
+    cleanup() {
+        // Stop broadcasting if active
+        if (this.audioProcessor && this.audioProcessor.state !== 'inactive') {
+            try {
+                this.audioProcessor.stop();
+            } catch (error) {
+                console.error('Error stopping audio processor:', error);
+            }
+        }
+        
+        // ... existing cleanup code if any ...
+    }
 }
 
 // Initialize the OpenAI voice assistant when the document is loaded
 document.addEventListener('DOMContentLoaded', () => {
-    window.openAIVoice = new OpenAIVoiceAssistant();
+    console.log('DOMContentLoaded event triggered for OpenAI voice assistant');
+    
+    // Check if we already have an OpenAI voice instance to prevent duplicates
+    if (window.openAIVoice) {
+        console.log('OpenAI Voice Assistant already initialized, skipping duplicate initialization');
+        return;
+    }
+    
+    // Delayed initialization to ensure UI elements are loaded
+    setTimeout(() => {
+        initializeOpenAIVoiceWithRetries();
+    }, 1000);
+    
+    // Recursive function to retry initialization with increasing delays
+    function initializeOpenAIVoiceWithRetries(attempt = 1, maxAttempts = 5) {
+        console.log(`Attempt ${attempt}/${maxAttempts} to initialize OpenAI voice assistant`);
+        
+        // First check if the required UI elements exist in the DOM
+        const connectButton = document.getElementById('connectOpenAI');
+        const voiceStatus = document.getElementById('voiceStatus');
+        
+        if (connectButton && voiceStatus) {
+            console.log('Required UI elements found in DOM, initializing OpenAI voice assistant');
+            initializeOpenAIVoice();
+        } else {
+            console.log(`Required UI elements not found. Button: ${!!connectButton}, Status: ${!!voiceStatus}`);
+            
+            if (attempt < maxAttempts) {
+                // Retry with exponential backoff
+                const delay = Math.min(1000 * Math.pow(2, attempt - 1), 10000);
+                console.log(`Will retry in ${delay}ms (attempt ${attempt + 1}/${maxAttempts})`);
+                
+                setTimeout(() => {
+                    initializeOpenAIVoiceWithRetries(attempt + 1, maxAttempts);
+                }, delay);
+            } else {
+                console.log('Max attempts reached, initializing anyway and hoping for the best');
+                initializeOpenAIVoice();
+            }
+        }
+    }
+    
+    // Main initialization function
+    function initializeOpenAIVoice() {
+        // Try to determine if we're the host or guest
+        try {
+            // Check URL parameters first
+            const urlParams = new URLSearchParams(window.location.search);
+            const roomParam = urlParams.get('room');
+            
+            // If there's a room param, we're likely a guest joining that room
+            if (roomParam) {
+                window.isHost = false;
+                console.log('Detected as GUEST player (from URL params)');
+            } else if (window.game && window.game.multiplayerManager) {
+                window.isHost = window.game.multiplayerManager.isHost;
+                console.log('Detected as ' + (window.isHost ? 'HOST' : 'GUEST') + ' player (from game manager)');
+            } else if (window.multiplayerManager) {
+                window.isHost = window.multiplayerManager.isHost;
+                console.log('Detected as ' + (window.isHost ? 'HOST' : 'GUEST') + ' player (from global manager)');
+            } else {
+                // Default to assuming we're the host if can't determine
+                window.isHost = true;
+                console.log('Could not determine if host/guest, defaulting to HOST');
+            }
+        } catch (e) {
+            console.error('Error detecting host/guest status:', e);
+            window.isHost = true; // Default to host on error
+        }
+        
+        console.log('Searching for socket.io connection...');
+        
+        // Function to delay execution and wait for socket.io to initialize
+        function waitForSocketInit(attemptCount = 0, maxAttempts = 30) {
+            if (attemptCount >= maxAttempts) {
+                console.log('Max attempts reached, initializing without multiplayer socket');
+                createVoiceAssistantWithoutSocket();
+                return;
+            }
+            
+            // Check for socket.io connection
+            console.log(`Socket detection attempt ${attemptCount + 1}/${maxAttempts}`);
+            
+            // NEW APPROACH: Check for active socket.io managers directly
+            let socket = null;
+            
+            // Method 1: Look for active socket connections through io.managers
+            if (window.io && typeof window.io === 'object' && window.io.managers) {
+                const managerUrls = Object.keys(window.io.managers);
+                if (managerUrls.length > 0) {
+                    console.log(`Found ${managerUrls.length} socket.io manager(s):`, managerUrls);
+                    
+                    // Try to get the first active manager
+                    for (const url of managerUrls) {
+                        const manager = window.io.managers[url];
+                        if (manager && manager.nsps) {
+                            const namespaces = Object.keys(manager.nsps);
+                            console.log(`Manager ${url} has namespaces:`, namespaces);
+                            
+                            // Try default namespace first
+                            if (manager.nsps['/'] && manager.nsps['/'].connected) {
+                                socket = manager.nsps['/'];
+                                console.log('Found ACTIVE socket.io connection in default namespace!', socket.id);
+                                break;
+                            }
+                            
+                            // Try other namespaces if default not connected
+                            for (const ns of namespaces) {
+                                if (manager.nsps[ns].connected) {
+                                    socket = manager.nsps[ns];
+                                    console.log(`Found ACTIVE socket.io connection in namespace ${ns}!`, socket.id);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Method 2: Check game object for multiplayer manager (most reliable)
+            if (!socket && window.game && window.game.multiplayerManager) {
+                const mpManager = window.game.multiplayerManager;
+                if (mpManager.socket) {
+                    socket = mpManager.socket;
+                    console.log('Found socket in game.multiplayerManager', socket.id);
+                }
+            }
+            
+            // Method 3: Check for socket in global MultiplayerManager instances
+            if (!socket && window.MultiplayerManager && window.MultiplayerManager.instance) {
+                if (window.MultiplayerManager.instance.socket) {
+                    socket = window.MultiplayerManager.instance.socket;
+                    console.log('Found socket in MultiplayerManager.instance', socket.id);
+                }
+            }
+            
+            // Method 4: Check the network folder specifically
+            if (!socket && window.network && window.network.socket) {
+                socket = window.network.socket;
+                console.log('Found socket in window.network', socket.id);
+            }
+            
+            // If socket found, test if it's actually working
+            if (socket) {
+                // Test socket connection by pinging the server
+                try {
+                    // Local function for fallback testing
+                    const testFallbackOrRetry = () => {
+                        // Try get-room-id event as fallback test
+                        socket.emit('get-room-id', (roomId) => {
+                            clearTimeout(pingTimeout);
+                            if (roomId) {
+                                console.log('Room ID test successful, got room:', roomId);
+                                createVoiceAssistantWithSocket(socket);
+                            } else {
+                                console.log('Socket found but not responding to tests, trying again...');
+                                setTimeout(() => waitForSocketInit(attemptCount + 1, maxAttempts), 500);
+                            }
+                        });
+                    };
+                
+                    socket.emit('ping_test', Date.now(), (response) => {
+                        if (response) {
+                            console.log('Socket connection test successful!', response);
+                            createVoiceAssistantWithSocket(socket);
+                        } else {
+                            console.warn('Socket connection test received empty response');
+                            testFallbackOrRetry();
+                        }
+                    });
+                    
+                    // Set timeout for ping response
+                    const pingTimeout = setTimeout(() => {
+                        console.warn('Socket ping test timed out');
+                        testFallbackOrRetry();
+                    }, 2000);
+                } catch (e) {
+                    console.error('Error testing socket:', e);
+                    setTimeout(() => waitForSocketInit(attemptCount + 1, maxAttempts), 500);
+                }
+            } else {
+                // No socket found, retry after delay
+                setTimeout(() => waitForSocketInit(attemptCount + 1, maxAttempts), 500);
+            }
+        }
+        
+        // Function to create voice assistant with a socket
+        function createVoiceAssistantWithSocket(socket) {
+            // Verify socket is still connected
+            if (!socket.connected) {
+                console.warn('Socket not connected, initializing without multiplayer');
+                createVoiceAssistantWithoutSocket();
+                return;
+            }
+            
+            console.log('Creating OpenAI Voice Assistant with socket', socket.id);
+            
+            // Check if instance already exists
+            if (window.openAIVoice) {
+                console.log('OpenAI Voice Assistant already exists, updating socket');
+                window.openAIVoice.updateSocketConnection(socket);
+                return;
+            }
+            
+            // Create new instance
+            window.openAIVoice = new OpenAIVoiceAssistant(socket);
+            console.log('OpenAI Voice Assistant initialized with multiplayer broadcasting');
+        }
+        
+        // Function to create voice assistant without a socket
+        function createVoiceAssistantWithoutSocket() {
+            console.log('Creating OpenAI Voice Assistant without multiplayer support');
+            window.openAIVoice = new OpenAIVoiceAssistant(null);
+            console.log('OpenAI Voice Assistant initialized for local use only');
+            
+            // Continue checking for socket in the background and update if found
+            let backgroundCheckInterval = setInterval(() => {
+                if (window.game && window.game.multiplayerManager && window.game.multiplayerManager.socket) {
+                    console.log('Found socket in background check!', window.game.multiplayerManager.socket.id);
+                    window.openAIVoice.updateSocketConnection(window.game.multiplayerManager.socket);
+                    clearInterval(backgroundCheckInterval);
+                }
+            }, 5000); // Check every 5 seconds
+        }
+        
+        // Start waiting for socket initialization
+        waitForSocketInit();
+    }
 });
