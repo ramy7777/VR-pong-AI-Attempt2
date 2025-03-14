@@ -225,6 +225,9 @@ export class Game {
                 }
                 
                 this.showMessage('Single Player Game Started!');
+                
+                // Set paddle colors in single player mode
+                this.setSinglePlayerPaddleColors();
             },
             onHost: () => {
                 if (this.multiplayerManager.isConnected) {
@@ -443,6 +446,9 @@ export class Game {
                             this.aiScore = 0;
                             this.playerScoreDisplay.updateScore(0);
                             this.aiScoreDisplay.updateScore(0);
+                            
+                            // Set paddle colors for single player mode
+                            this.setSinglePlayerPaddleColors();
                             
                             this.ball.start();
                             this.timer.start();
@@ -1160,6 +1166,9 @@ export class Game {
                                         this.playerScoreDisplay.updateScore(0);
                                         this.aiScoreDisplay.updateScore(0);
                                         
+                                        // Set paddle colors for single player mode
+                                        this.setSinglePlayerPaddleColors();
+                                        
                                         this.ball.start();
                                         this.timer.start();
                                         if (this.soundManager) {
@@ -1720,6 +1729,11 @@ export class Game {
         this.playerScore = 0;
         this.aiScore = 0;
         
+        // Set paddle colors in single player mode
+        if (!this.isMultiplayer) {
+            this.setSinglePlayerPaddleColors();
+        }
+        
         // Reset and start timer
         if (this.timer) {
             this.timer.reset();
@@ -1791,5 +1805,16 @@ export class Game {
     detectAndSetupMobileControls() {
         // Initialize mobile controller
         this.mobileController = new MobileController(this);
+    }
+
+    // Method to set paddle colors in single player mode
+    setSinglePlayerPaddleColors() {
+        if (this.playerPaddle && this.aiPaddle) {
+            // Green for player paddle
+            this.playerPaddle.setColor(0x00ff00);
+            // Red for AI paddle
+            this.aiPaddle.setColor(0xff0000);
+            console.log("Set single player paddle colors: player=green, AI=red");
+        }
     }
 }

@@ -124,6 +124,17 @@ export class Paddle {
         }
     }
     
+    // Set paddle color to a specific hex color
+    setColor(hexColor) {
+        // Update all materials with the specified color
+        this.paddleMaterial.color.setHex(hexColor);
+        this.paddleMaterial.emissive.setHex(hexColor);
+        this.glowMaterial.color.setHex(hexColor);
+        this.fieldMaterial.color.setHex(hexColor);
+        
+        console.log(`Paddle ${this.paddleIndex} color set to ${hexColor.toString(16)}`);
+    }
+    
     // Check if paddle is owned
     isOwned() {
         return this.ownerId !== null;
