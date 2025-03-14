@@ -4,6 +4,9 @@
  * Using native WebRTC implementation with server proxy for key management
  */
 
+// Import the GameAIUpdater singleton
+import gameAIUpdater from './ai/GameAIUpdater.js';
+
 class OpenAIVoiceAssistant {
     constructor(socket = null) {
         console.log(`OpenAIVoiceAssistant initialized ${socket ? 'with' : 'without'} a socket - broadcasting ${socket ? 'enabled' : 'disabled'}`);
@@ -45,29 +48,11 @@ class OpenAIVoiceAssistant {
         this.receivingRemoteAudio = false;
         
         // Game state tracking
+        // We're keeping basic game state here for backward compatibility
+        // but most game state tracking will be handled by GameAIUpdater
         this.gameInProgress = false;
         this.playerScore = 0;
         this.aiScore = 0;
-        this.lastCollisionType = null;
-        this.lastCollisionTime = 0;
-        this.gameplayTipsTimer = null;
-        
-        // Game timing tracking
-        this.gameStartTime = 0;
-        this.currentGameTime = 0;
-        this.matchTimeElapsed = 0;
-        this.rallyStartTime = 0;
-        this.currentRallyDuration = 0;
-        this.lastRallyDuration = 0;
-        this.aiSlowdownActive = false;
-        this.aiSlowdownStartTime = 0;
-        this.aiSlowdownDuration = 0;
-        
-        // Game timer tracking
-        this.gameTimerValue = 150; // Default 2.5 minutes (150 seconds)
-        this.gameTimerRunning = false;
-        this.gameTimerLastWarningAt = 0;
-        this.timerWarningThresholds = [60, 30, 20, 10]; // Seconds left thresholds for warnings
         
         // Message handling
         this.messageQueue = [];
@@ -84,6 +69,9 @@ class OpenAIVoiceAssistant {
         if (this.socket) {
             this.setupAIAudioReceiver();
         }
+        
+        // Initialize the GameAIUpdater with a reference to this class
+        gameAIUpdater.initialize(this);
     }
     
     bindEvents() {
@@ -117,6 +105,31 @@ class OpenAIVoiceAssistant {
         } else {
             console.error('Connect button not found in the DOM, click handler not attached');
         }
+        
+        // Note: We're no longer attaching game event listeners here
+        // Game event listeners are now handled by GameAIUpdater
+        
+        // But we need to sync game state for backward compatibility
+        document.addEventListener('game-started', (event) => {
+            this.gameInProgress = true;
+            this.playerScore = 0;
+            this.aiScore = 0;
+        });
+        
+        document.addEventListener('game-ended', () => {
+            this.gameInProgress = false;
+        });
+        
+        document.addEventListener('score-update', (event) => {
+            if (event.detail) {
+                const { playerScore, aiScore } = event.detail;
+                this.playerScore = playerScore;
+                this.aiScore = aiScore;
+            }
+        });
+        
+        // Listen for connection changes to update the UI
+        // ... existing code ...
         
         // Add event listeners for game events
         document.addEventListener('game-started', (event) => {
