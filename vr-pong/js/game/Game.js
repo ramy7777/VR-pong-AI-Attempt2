@@ -1244,6 +1244,16 @@ export class Game {
                         this.aiTimerDisplay.updateTime(this.timer.timeLeft);
                     }
                     
+                    // Emit timer update event for OpenAI voice assistant
+                    document.dispatchEvent(new CustomEvent('timer-update', {
+                        detail: {
+                            timeLeft: this.timer.timeLeft,
+                            isRunning: this.timer.isRunning,
+                            totalDuration: this.timer.duration,
+                            isFinished: timerFinished
+                        }
+                    }));
+                    
                     // Check if timer has finished and game is not already over
                     if (timerFinished && !this.gameOver) {
                         this.handleGameOver();
@@ -1635,7 +1645,9 @@ export class Game {
                 playerScore: this.playerScore,
                 aiScore: this.aiScore,
                 winner: this.playerScore > this.aiScore ? 'player' : (this.aiScore > this.playerScore ? 'ai' : 'tie'),
-                gameMode: this.isMultiplayer ? 'multiplayer' : 'singleplayer'
+                gameMode: this.isMultiplayer ? 'multiplayer' : 'singleplayer',
+                timeRemaining: 0,
+                timerFinished: true
             }
         }));
         
@@ -1689,19 +1701,37 @@ export class Game {
         this.playerScore = 0;
         this.aiScore = 0;
         
+        // Reset and start timer
+        if (this.timer) {
+            this.timer.reset();
+            this.timer.start();
+            
+            // Update timer displays
+            if (this.playerTimerDisplay) this.playerTimerDisplay.updateTime(this.timer.timeLeft);
+            if (this.aiTimerDisplay) this.aiTimerDisplay.updateTime(this.timer.timeLeft);
+        }
+        
         // Dispatch game started event for OpenAI voice assistant
         document.dispatchEvent(new CustomEvent('game-started', {
             detail: {
                 playerScore: this.playerScore,
                 aiScore: this.aiScore,
-                gameMode: this.isMultiplayer ? 'multiplayer' : 'singleplayer'
+                gameMode: this.isMultiplayer ? 'multiplayer' : 'singleplayer',
+                timerDuration: this.timer ? this.timer.duration : 150,
+                timeLeft: this.timer ? this.timer.timeLeft : 150
             }
         }));
         
-        // Reset and start timer
+        // Send immediate timer update to ensure voice assistant gets the initial state
         if (this.timer) {
-            this.timer.reset();
-            this.timer.start();
+            document.dispatchEvent(new CustomEvent('timer-update', {
+                detail: {
+                    timeLeft: this.timer.timeLeft,
+                    isRunning: this.timer.isRunning,
+                    totalDuration: this.timer.duration,
+                    isFinished: false
+                }
+            }));
         }
         
         // Reset and start ball
