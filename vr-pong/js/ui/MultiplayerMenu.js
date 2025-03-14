@@ -21,6 +21,12 @@ export class MultiplayerMenu {
         // Track currently hovered button
         this.currentHoveredButton = null;
         
+        // Animation properties
+        this.animationDuration = 400; // ms
+        this.animationStartTime = 0;
+        this.isAnimating = false;
+        this.animationDirection = 'in'; // 'in' or 'out'
+        
         // Preload Orbitron font to use in canvas
         this.fontLoaded = false;
         this.preloadOrbitronFont();
@@ -63,7 +69,19 @@ export class MultiplayerMenu {
         };
         
         this.createMenu();
-        this.hide(); // Initially hidden
+        
+        // Set initial animation values
+        this.menuGroup.scale.set(0.01, 0.01, 0.01);
+        this.menuGroup.userData.originalPosition = this.menuGroup.position.clone();
+        this.menuGroup.userData.originalScale = new THREE.Vector3(1, 1, 1);
+        this.menuGroup.userData.originalOpacity = 1;
+        
+        // Set up animation update BEFORE calling hide
+        this.setupAnimation();
+        
+        // Initially hidden - AFTER animation setup
+        this.menuGroup.visible = false;
+        this.isVisible = false;
     }
     
     // Preload Orbitron font for canvas text
@@ -86,7 +104,217 @@ export class MultiplayerMenu {
         setTimeout(() => {
             this.fontLoaded = true;
             document.body.removeChild(testElement);
+            
+            // Update text if necessary
+            this.updateButtonText();
         }, 500);
+    }
+    
+    // Add method to update button text
+    updateButtonText() {
+        // Only update if font is loaded and buttons exist
+        if (!this.fontLoaded || !this.buttons.singleplayer) return;
+        
+        console.log('MultiplayerMenu: Updating button text');
+        
+        // Get texts for each button
+        this.updateButtonTextCanvas(this.buttons.singleplayer, 'SINGLE PLAYER');
+        this.updateButtonTextCanvas(this.buttons.host, 'HOST GAME');
+        this.updateButtonTextCanvas(this.buttons.join, 'QUICK JOIN');
+        this.updateButtonTextCanvas(this.buttons.back, 'BACK');
+    }
+    
+    // Force recreate all button text canvases - useful when text disappears
+    forceTextUpdate() {
+        if (!this.fontLoaded || !this.buttons.singleplayer) return;
+        
+        console.log('MultiplayerMenu: Force recreating all button text canvases');
+        
+        // Completely recreate text canvases for all buttons
+        this.recreateButtonTextCanvas(this.buttons.singleplayer, 'SINGLE PLAYER');
+        this.recreateButtonTextCanvas(this.buttons.host, 'HOST GAME');
+        this.recreateButtonTextCanvas(this.buttons.join, 'QUICK JOIN');
+        this.recreateButtonTextCanvas(this.buttons.back, 'BACK');
+        
+        // Schedule multiple updates to ensure text appears
+        this.scheduleTextRefreshes();
+    }
+    
+    // New method to schedule multiple text updates
+    scheduleTextRefreshes() {
+        // Schedule multiple text updates to ensure visibility
+        // Some 3D engines/browsers may need multiple refreshes to properly show canvas textures
+        const refreshTimes = [100, 300, 600, 1000, 1500, 2000]; // Add longer refresh times for safety
+        
+        refreshTimes.forEach(delay => {
+            setTimeout(() => {
+                if (this.isVisible) {
+                    console.log(`MultiplayerMenu: Scheduled text refresh after ${delay}ms`);
+                    this.recreateButtonTextCanvas(this.buttons.singleplayer, 'SINGLE PLAYER');
+                    this.recreateButtonTextCanvas(this.buttons.host, 'HOST GAME');
+                    this.recreateButtonTextCanvas(this.buttons.join, 'QUICK JOIN');
+                    this.recreateButtonTextCanvas(this.buttons.back, 'BACK');
+                }
+            }, delay);
+        });
+        
+        // Extra safety check - verify all button text is visible when animation completes
+        setTimeout(() => {
+            if (this.isVisible) {
+                console.log("MultiplayerMenu: Final safety text refresh to ensure visibility");
+                this.recreateButtonTextCanvas(this.buttons.singleplayer, 'SINGLE PLAYER');
+                this.recreateButtonTextCanvas(this.buttons.host, 'HOST GAME');
+                this.recreateButtonTextCanvas(this.buttons.join, 'QUICK JOIN');
+                this.recreateButtonTextCanvas(this.buttons.back, 'BACK');
+            }
+        }, this.animationDuration + 100); // Slightly after animation should complete
+    }
+    
+    // Method to completely recreate a button's text canvas
+    recreateButtonTextCanvas(buttonGroup, text) {
+        // Find the text mesh
+        const textMesh = buttonGroup.children.find(child => child instanceof THREE.Mesh && 
+                                                child.material && 
+                                                (child.material.map instanceof THREE.CanvasTexture || child.name === 'textMesh'));
+        
+        if (!textMesh) return;
+        
+        // Remove the existing material and texture to prevent memory leaks
+        if (textMesh.material) {
+            if (textMesh.material.map) {
+                textMesh.material.map.dispose();
+            }
+            textMesh.material.dispose();
+        }
+        
+        // Create a new canvas
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        canvas.width = 256;
+        canvas.height = 64;
+        
+        // Clear the canvas
+        context.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // Add subtle gradient to text
+        const textGradient = context.createLinearGradient(0, 0, 0, canvas.height);
+        textGradient.addColorStop(0, '#ffffff');
+        textGradient.addColorStop(1, '#f0f0f0');
+        
+        context.fillStyle = textGradient;
+        
+        // Adjust font size based on text length
+        let fontSize = 32;
+        if (text.length > 10) {
+            fontSize = 28;
+        }
+        if (text.length > 12) {
+            fontSize = 24;
+        }
+        
+        context.font = `bold ${fontSize}px Orbitron, Arial, sans-serif`;
+        context.textAlign = 'center';
+        context.textBaseline = 'middle';
+        
+        // Add shadow to text
+        context.shadowColor = 'rgba(0, 0, 0, 0.3)';
+        context.shadowBlur = 4;
+        context.shadowOffsetX = 1;
+        context.shadowOffsetY = 1;
+        
+        // Draw the text
+        context.fillText(text, canvas.width / 2, canvas.height / 2);
+        
+        // Add subtle glow
+        context.globalCompositeOperation = 'lighter';
+        context.shadowColor = 'rgba(255, 255, 255, 0.5)';
+        context.shadowBlur = 3;
+        context.fillStyle = 'rgba(255, 255, 255, 0.2)';
+        
+        // Redraw with glow
+        context.fillText(text, canvas.width / 2, canvas.height / 2);
+        context.globalCompositeOperation = 'source-over';
+        
+        // Create a new texture and material
+        const texture = new THREE.CanvasTexture(canvas);
+        const material = new THREE.MeshBasicMaterial({
+            map: texture,
+            transparent: true
+        });
+        
+        // Assign the new material to the text mesh
+        textMesh.material = material;
+        textMesh.name = 'textMesh'; // Mark as text mesh for future identification
+    }
+    
+    // Method to update button text canvas
+    updateButtonTextCanvas(buttonGroup, text) {
+        // Get the text mesh from the button group
+        const textMesh = buttonGroup.children.find(child => child instanceof THREE.Mesh && 
+                                                child.material && 
+                                                (child.material.map instanceof THREE.CanvasTexture || child.name === 'textMesh'));
+        
+        if (!textMesh) return;
+        
+        // Check if the texture exists, if not, recreate it completely
+        if (!textMesh.material || !textMesh.material.map) {
+            this.recreateButtonTextCanvas(buttonGroup, text);
+            return;
+        }
+        
+        // Create canvas for button text
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        canvas.width = 256;
+        canvas.height = 64;
+        
+        // Clear the canvas
+        context.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // Add subtle gradient to text
+        const textGradient = context.createLinearGradient(0, 0, 0, canvas.height);
+        textGradient.addColorStop(0, '#ffffff');
+        textGradient.addColorStop(1, '#f0f0f0');
+        
+        context.fillStyle = textGradient;
+        
+        // Adjust font size based on text length
+        let fontSize = 32;
+        if (text.length > 10) {
+            fontSize = 28;
+        }
+        if (text.length > 12) {
+            fontSize = 24;
+        }
+        
+        context.font = `bold ${fontSize}px Orbitron, Arial, sans-serif`;
+        context.textAlign = 'center';
+        context.textBaseline = 'middle';
+        
+        // Add shadow to text
+        context.shadowColor = 'rgba(0, 0, 0, 0.3)';
+        context.shadowBlur = 4;
+        context.shadowOffsetX = 1;
+        context.shadowOffsetY = 1;
+        
+        // Draw the text
+        context.fillText(text, canvas.width / 2, canvas.height / 2);
+        
+        // Add subtle glow
+        context.globalCompositeOperation = 'lighter';
+        context.shadowColor = 'rgba(255, 255, 255, 0.5)';
+        context.shadowBlur = 3;
+        context.fillStyle = 'rgba(255, 255, 255, 0.2)';
+        
+        // Redraw with glow
+        context.fillText(text, canvas.width / 2, canvas.height / 2);
+        context.globalCompositeOperation = 'source-over';
+        
+        // Update the texture
+        if (textMesh.material.map) {
+            textMesh.material.map.image = canvas;
+            textMesh.material.map.needsUpdate = true;
+        }
     }
     
     createMenu() {
@@ -494,30 +722,119 @@ export class MultiplayerMenu {
     }
     
     show() {
+        // Store the original opacity values for materials
+        this.menuGroup.traverse((child) => {
+            if (child.material && child.material.transparent) {
+                child.userData.originalOpacity = child.material.opacity;
+            }
+        });
+        
+        // Reset the menu position to its original position
+        if (this.menuGroup.userData.originalPosition) {
+            this.menuGroup.position.copy(this.menuGroup.userData.originalPosition);
+            console.log(`MultiplayerMenu: Reset position to original: x=${this.menuGroup.position.x.toFixed(2)}, y=${this.menuGroup.position.y.toFixed(2)}, z=${this.menuGroup.position.z.toFixed(2)}`);
+        } else {
+            // If original position wasn't stored, reset to default
+            this.menuGroup.position.set(0, 1.6, -1.0);
+            console.log("MultiplayerMenu: Original position not found, reset to default position");
+        }
+        
+        // Reset menu rotation completely
+        this.menuGroup.rotation.set(0, 0, 0);
+        
+        // Fully reset all button positions and scales to prevent cumulative effects
+        for (const key in this.buttons) {
+            if (this.buttons[key]) {
+                // Reset position Y to exactly what's in the stored value
+                if (this.buttons[key].userData.originalY !== undefined) {
+                    this.buttons[key].position.y = this.buttons[key].userData.originalY;
+                    // Also ensure Z position is reset (in case it was modified during button press)
+                    this.buttons[key].position.z = 0.02; // Original Z from createButton
+                }
+                
+                // Reset scale to exactly 1
+                this.buttons[key].scale.set(0.01, 0.01, 0.01); // Will be animated back to 1
+                
+                // Reset rotation
+                this.buttons[key].rotation.set(0, 0, 0);
+            }
+        }
+        
+        // Store original button positions after reset to ensure they're correct
+        this.storeButtonPositions();
+        
+        // Make menu visible
         this.menuGroup.visible = true;
         this.isVisible = true;
         this.showTime = Date.now();
-        console.log(`MultiplayerMenu: Shown at ${this.showTime}, input will be enabled after ${this.showDelay}ms`);
+        
+        // Force immediate text recreation before the animation starts
+        this.forceTextUpdate();
+        
+        // Start animation
+        this.menuGroup.scale.set(0.01, 0.01, 0.01);
+        this.animationDirection = 'in';
+        this.animationStartTime = Date.now();
+        this.isAnimating = true;
+        
+        // Trigger animation
+        this.animateMenuFunction();
+        
+        console.log(`MultiplayerMenu: Shown with animation at ${this.showTime}, input will be enabled after ${this.showDelay}ms`);
     }
     
     hide() {
-        this.menuGroup.visible = false;
+        // Only try to animate if animation function exists
+        if (this.animateMenuFunction) {
+            // Start exit animation
+            this.animationDirection = 'out';
+            this.animationStartTime = Date.now();
+            this.isAnimating = true;
+            
+            // Trigger animation
+            this.animateMenuFunction();
+        } else {
+            // Fallback if animation not set up yet
+            this.menuGroup.visible = false;
+        }
+        
+        // Menu will be fully hidden when animation completes
         this.isVisible = false;
+        
+        // Reset any highlighted button
+        if (this.currentHoveredButton) {
+            this.unhighlightButton(this.currentHoveredButton);
+        }
+        
+        // Log for debugging
+        console.log("MultiplayerMenu: Hidden, cleaning up button states");
     }
     
     dispose() {
         // Clean up resources
-        for (const button of Object.values(this.buttons)) {
-            button.children.forEach(child => {
-                if (child.geometry) child.geometry.dispose();
-                if (child.material) {
-                    if (child.material.map) child.material.map.dispose();
-                    child.material.dispose();
-                }
-            });
+        for (const buttonKey in this.buttons) {
+            const button = this.buttons[buttonKey];
+            if (button) {
+                button.children.forEach(child => {
+                    if (child.geometry) child.geometry.dispose();
+                    if (child.material) {
+                        if (child.material.map) child.material.map.dispose();
+                        child.material.dispose();
+                    }
+                });
+            }
         }
         
-        this.scene.remove(this.menuGroup);
+        // Remove from scene
+        if (this.scene) {
+            this.scene.remove(this.menuGroup);
+        }
+        
+        // Clear any animations in progress
+        this.isAnimating = false;
+        this.isVisible = false;
+        
+        console.log("MultiplayerMenu: Resources disposed");
     }
     
     // Method to check for mouse hover
@@ -549,5 +866,172 @@ export class MultiplayerMenu {
         }
         
         return null;
+    }
+    
+    setupAnimation() {
+        // Add this method to the animation loop in Game.js
+        const animateMenu = () => {
+            if (this.isAnimating) {
+                const now = Date.now();
+                const elapsed = now - this.animationStartTime;
+                const progress = Math.min(elapsed / this.animationDuration, 1);
+                
+                // Cubic ease-out animation curve
+                const eased = 1 - Math.pow(1 - progress, 3);
+                
+                if (this.animationDirection === 'in') {
+                    // Animate in
+                    const scale = 0.01 + (this.menuGroup.userData.originalScale.x - 0.01) * eased;
+                    this.menuGroup.scale.set(scale, scale, scale);
+                    
+                    // Add rotation effect during entry
+                    const maxRotation = 0.1; // Maximum rotation in radians
+                    const rotationX = maxRotation * (1 - eased);
+                    const rotationY = maxRotation * 0.5 * (1 - eased);
+                    this.menuGroup.rotation.x = rotationX;
+                    this.menuGroup.rotation.y = rotationY;
+                    
+                    // Optional: Add a slight bounce effect
+                    if (progress > 0.8) {
+                        const bounce = Math.sin((progress - 0.8) * 5 * Math.PI) * 0.03;
+                        this.menuGroup.scale.set(scale + bounce, scale + bounce, scale + bounce);
+                    }
+                    
+                    // Animate opacity for materials
+                    this.menuGroup.traverse((child) => {
+                        if (child.material && child.material.transparent) {
+                            child.material.opacity = eased * child.userData.originalOpacity;
+                        }
+                    });
+                    
+                    // Staggered animation for buttons
+                    const buttonDelay = 100; // ms between each button appearing
+                    const buttonKeys = ['singleplayer', 'host', 'join', 'back'];
+                    
+                    buttonKeys.forEach((key, index) => {
+                        if (this.buttons[key]) {
+                            // Calculate delayed progress for each button
+                            const buttonDelayMs = index * buttonDelay;
+                            const buttonElapsed = elapsed - buttonDelayMs;
+                            const buttonProgress = Math.max(0, Math.min(buttonElapsed / this.animationDuration, 1));
+                            const buttonEased = 1 - Math.pow(1 - buttonProgress, 3);
+                            
+                            // Apply staggered scale to each button
+                            if (buttonProgress <= 0) {
+                                this.buttons[key].scale.set(0.01, 0.01, 0.01);
+                            } else {
+                                const buttonScale = 0.01 + 0.99 * buttonEased;
+                                this.buttons[key].scale.set(buttonScale, buttonScale, buttonScale);
+                                
+                                // Add slight upward movement as buttons appear
+                                const yOffset = (1 - buttonEased) * 0.1;
+                                this.buttons[key].position.y = this.buttons[key].userData.originalY - yOffset;
+                                
+                                // Add a slight rotation to each button
+                                const buttonRotation = (1 - buttonEased) * 0.2;
+                                this.buttons[key].rotation.y = buttonRotation;
+                            }
+                        }
+                    });
+                } else {
+                    // Animate out
+                    const scale = this.menuGroup.userData.originalScale.x - (this.menuGroup.userData.originalScale.x - 0.01) * eased;
+                    this.menuGroup.scale.set(scale, scale, scale);
+                    
+                    // Add rotation effect during exit (opposite direction)
+                    const maxRotation = 0.1; // Maximum rotation in radians
+                    const rotationX = -maxRotation * eased;
+                    const rotationY = -maxRotation * 0.5 * eased;
+                    this.menuGroup.rotation.x = rotationX;
+                    this.menuGroup.rotation.y = rotationY;
+                    
+                    // Staggered exit animation for buttons (reverse order)
+                    const buttonDelay = 50; // ms between each button disappearing (faster than entry)
+                    const buttonKeys = ['back', 'join', 'host', 'singleplayer']; // Reverse order
+                    
+                    buttonKeys.forEach((key, index) => {
+                        if (this.buttons[key]) {
+                            // Calculate delayed progress for each button
+                            const buttonDelayMs = index * buttonDelay;
+                            const buttonElapsed = elapsed - buttonDelayMs;
+                            const buttonProgress = Math.max(0, Math.min(buttonElapsed / (this.animationDuration * 0.7), 1));
+                            const buttonEased = 1 - Math.pow(1 - buttonProgress, 3);
+                            
+                            // Apply staggered fade to each button
+                            const buttonScale = 1 - 0.99 * buttonEased;
+                            this.buttons[key].scale.set(buttonScale, buttonScale, buttonScale);
+                            
+                            // Add slight downward movement as buttons disappear
+                            const yOffset = buttonEased * 0.1;
+                            this.buttons[key].position.y = this.buttons[key].userData.originalY - yOffset;
+                            
+                            // Add a slight rotation to each button on exit
+                            const buttonRotation = buttonEased * -0.2; // Opposite direction
+                            this.buttons[key].rotation.y = buttonRotation;
+                        }
+                    });
+                    
+                    // Animate opacity for materials
+                    this.menuGroup.traverse((child) => {
+                        if (child.material && child.material.transparent) {
+                            child.material.opacity = (1 - eased) * child.userData.originalOpacity;
+                        }
+                    });
+                }
+                
+                // Check if animation is complete
+                if (progress >= 1) {
+                    this.isAnimating = false;
+                    
+                    // If animating out, actually hide the menu
+                    if (this.animationDirection === 'out') {
+                        this.menuGroup.visible = false;
+                    } else {
+                        // Reset rotations when entry animation completes
+                        this.menuGroup.rotation.x = 0;
+                        this.menuGroup.rotation.y = 0;
+                        
+                        // Reset button rotations
+                        for (const key in this.buttons) {
+                            if (this.buttons[key]) {
+                                this.buttons[key].rotation.y = 0;
+                            }
+                        }
+                        
+                        // Extra safety check - ensure button text is visible after animation completes
+                        if (this.isVisible) {
+                            console.log("MultiplayerMenu: Animation complete - safety text refresh");
+                            this.recreateButtonTextCanvas(this.buttons.singleplayer, 'SINGLE PLAYER');
+                            this.recreateButtonTextCanvas(this.buttons.host, 'HOST GAME');
+                            this.recreateButtonTextCanvas(this.buttons.join, 'QUICK JOIN');
+                            this.recreateButtonTextCanvas(this.buttons.back, 'BACK');
+                        }
+                    }
+                }
+                
+                // Continue animation in next frame
+                if (this.isAnimating) {
+                    requestAnimationFrame(animateMenu);
+                }
+            }
+        };
+        
+        // Store the animation function for cleanup
+        this.animateMenuFunction = animateMenu;
+    }
+    
+    // Method to store original button positions
+    storeButtonPositions() {
+        for (const key in this.buttons) {
+            if (this.buttons[key]) {
+                this.buttons[key].userData.originalY = this.buttons[key].position.y;
+                this.buttons[key].userData.originalScale = new THREE.Vector3(1, 1, 1);
+                this.buttons[key].userData.originalRotation = this.buttons[key].rotation.y;
+            }
+        }
+        
+        // Store original menu rotation
+        this.menuGroup.userData.originalRotationX = this.menuGroup.rotation.x;
+        this.menuGroup.userData.originalRotationY = this.menuGroup.rotation.y;
     }
 }

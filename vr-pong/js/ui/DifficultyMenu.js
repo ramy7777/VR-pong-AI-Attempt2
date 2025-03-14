@@ -92,11 +92,6 @@ export class DifficultyMenu {
         // Set up animation update
         this.setupAnimation();
         
-        // Store menu scale
-        this.menuGroup.userData = {
-            originalScale: new THREE.Vector3(1, 1, 1)
-        };
-        
         // Store menu rotation
         this.menuGroup.userData.originalRotationX = this.menuGroup.rotation.x;
         this.menuGroup.userData.originalRotationY = this.menuGroup.rotation.y;
@@ -138,6 +133,8 @@ export class DifficultyMenu {
         // Only update if font is loaded and buttons exist
         if (!this.fontLoaded || !this.buttons.easy) return;
         
+        console.log('DifficultyMenu: Updating button text');
+        
         // Update button text for each button
         this.updateButtonTextCanvas(this.buttons.easy, 'EASY', 'Slow AI paddle');
         this.updateButtonTextCanvas(this.buttons.medium, 'MEDIUM', 'Normal speed AI');
@@ -145,13 +142,158 @@ export class DifficultyMenu {
         this.updateButtonTextCanvas(this.buttons.back, 'BACK');
     }
     
+    // Force recreate all button text canvases - useful when text disappears
+    forceTextUpdate() {
+        if (!this.fontLoaded || !this.buttons.easy) return;
+        
+        console.log('DifficultyMenu: Force recreating all button text canvases');
+        
+        // Completely recreate text canvases for all buttons
+        this.recreateButtonTextCanvas(this.buttons.easy, 'EASY', 'Slow AI paddle');
+        this.recreateButtonTextCanvas(this.buttons.medium, 'MEDIUM', 'Normal speed AI');
+        this.recreateButtonTextCanvas(this.buttons.expert, 'EXPERT', 'Fast AI paddle');
+        this.recreateButtonTextCanvas(this.buttons.back, 'BACK');
+        
+        // Schedule multiple updates to ensure text appears
+        this.scheduleTextRefreshes();
+    }
+    
+    // New method to schedule multiple text updates
+    scheduleTextRefreshes() {
+        // Schedule multiple text updates to ensure visibility
+        // Some 3D engines/browsers may need multiple refreshes to properly show canvas textures
+        const refreshTimes = [100, 300, 600, 1000, 1500, 2000]; // Add longer refresh times for safety
+        
+        refreshTimes.forEach(delay => {
+            setTimeout(() => {
+                if (this.isVisible) {
+                    console.log(`DifficultyMenu: Scheduled text refresh after ${delay}ms`);
+                    this.recreateButtonTextCanvas(this.buttons.easy, 'EASY', 'Slow AI paddle');
+                    this.recreateButtonTextCanvas(this.buttons.medium, 'MEDIUM', 'Normal speed AI');
+                    this.recreateButtonTextCanvas(this.buttons.expert, 'EXPERT', 'Fast AI paddle');
+                    this.recreateButtonTextCanvas(this.buttons.back, 'BACK');
+                }
+            }, delay);
+        });
+        
+        // Extra safety check - verify all button text is visible when animation completes
+        setTimeout(() => {
+            if (this.isVisible) {
+                console.log("DifficultyMenu: Final safety text refresh to ensure visibility");
+                this.recreateButtonTextCanvas(this.buttons.easy, 'EASY', 'Slow AI paddle');
+                this.recreateButtonTextCanvas(this.buttons.medium, 'MEDIUM', 'Normal speed AI');
+                this.recreateButtonTextCanvas(this.buttons.expert, 'EXPERT', 'Fast AI paddle');
+                this.recreateButtonTextCanvas(this.buttons.back, 'BACK');
+            }
+        }, this.animationDuration + 100); // Slightly after animation should complete
+    }
+    
+    // Method to completely recreate a button's text canvas
+    recreateButtonTextCanvas(buttonGroup, text, description = '') {
+        // Find the text mesh
+        const textMesh = buttonGroup.children.find(child => child instanceof THREE.Mesh && 
+                                                child.material && 
+                                                (child.material.map instanceof THREE.CanvasTexture || child.name === 'textMesh'));
+        
+        if (!textMesh) return;
+        
+        // Remove the existing material and texture to prevent memory leaks
+        if (textMesh.material) {
+            if (textMesh.material.map) {
+                textMesh.material.map.dispose();
+            }
+            textMesh.material.dispose();
+        }
+        
+        // Create a new canvas
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        canvas.width = 256;
+        canvas.height = 64;
+        
+        // Clear the canvas
+        context.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // Add subtle gradient to text
+        const textGradient = context.createLinearGradient(0, 0, 0, canvas.height);
+        textGradient.addColorStop(0, '#ffffff');
+        textGradient.addColorStop(1, '#f0f0f0');
+        
+        context.fillStyle = textGradient;
+        
+        // Adjust font size based on text length
+        let fontSize = 32;
+        if (text.length > 10) {
+            fontSize = 28;
+        }
+        if (text.length > 12) {
+            fontSize = 24;
+        }
+        
+        context.font = `bold ${fontSize}px Orbitron, Arial, sans-serif`;
+        context.textAlign = 'center';
+        context.textBaseline = 'middle';
+        
+        // Add shadow to text
+        context.shadowColor = 'rgba(0, 0, 0, 0.3)';
+        context.shadowBlur = 4;
+        context.shadowOffsetX = 1;
+        context.shadowOffsetY = 1;
+        
+        // Draw the text
+        if (description) {
+            // Main text slightly higher if there's a description
+            context.fillText(text, canvas.width / 2, canvas.height / 3);
+            
+            // Draw description in smaller font below
+            context.font = `16px Orbitron, Arial, sans-serif`;
+            context.fillStyle = 'rgba(255, 255, 255, 0.8)';
+            context.fillText(description, canvas.width / 2, canvas.height * 2/3);
+        } else {
+            // Center the text if no description
+            context.fillText(text, canvas.width / 2, canvas.height / 2);
+        }
+        
+        // Add subtle glow
+        context.globalCompositeOperation = 'lighter';
+        context.shadowColor = 'rgba(255, 255, 255, 0.5)';
+        context.shadowBlur = 3;
+        context.fillStyle = 'rgba(255, 255, 255, 0.2)';
+        
+        // Redraw with glow
+        context.font = `bold ${fontSize}px Orbitron, Arial, sans-serif`;
+        if (description) {
+            context.fillText(text, canvas.width / 2, canvas.height / 3);
+        } else {
+            context.fillText(text, canvas.width / 2, canvas.height / 2);
+        }
+        context.globalCompositeOperation = 'source-over';
+        
+        // Create a new texture and material
+        const texture = new THREE.CanvasTexture(canvas);
+        const material = new THREE.MeshBasicMaterial({
+            map: texture,
+            transparent: true
+        });
+        
+        // Assign the new material to the text mesh
+        textMesh.material = material;
+        textMesh.name = 'textMesh'; // Mark as text mesh for future identification
+    }
+    
     updateButtonTextCanvas(buttonGroup, text, description = '') {
         // Get the text mesh from the button group
         const textMesh = buttonGroup.children.find(child => child instanceof THREE.Mesh && 
-                                                 child.material.map && 
-                                                 child.material.map instanceof THREE.CanvasTexture);
+                                                child.material && 
+                                                (child.material.map instanceof THREE.CanvasTexture || child.name === 'textMesh'));
         
         if (!textMesh) return;
+        
+        // Check if the texture exists, if not, recreate it completely
+        if (!textMesh.material || !textMesh.material.map) {
+            this.recreateButtonTextCanvas(buttonGroup, text, description);
+            return;
+        }
         
         // Create canvas for button text
         const canvas = document.createElement('canvas');
@@ -169,8 +311,16 @@ export class DifficultyMenu {
         
         context.fillStyle = textGradient;
         
-        // Set font based on font loading status
-        context.font = `bold 32px Orbitron, Arial, sans-serif`;
+        // Adjust font size based on text length
+        let fontSize = 32;
+        if (text.length > 10) {
+            fontSize = 28;
+        }
+        if (text.length > 12) {
+            fontSize = 24;
+        }
+        
+        context.font = `bold ${fontSize}px Orbitron, Arial, sans-serif`;
         context.textAlign = 'center';
         context.textBaseline = 'middle';
         
@@ -180,13 +330,18 @@ export class DifficultyMenu {
         context.shadowOffsetX = 1;
         context.shadowOffsetY = 1;
         
-        // Draw the main text in the top portion
-        context.fillText(text, canvas.width / 2, canvas.height * 0.35);
-        
-        // Draw the description text if provided
+        // Draw the text
         if (description) {
+            // Main text slightly higher if there's a description
+            context.fillText(text, canvas.width / 2, canvas.height / 3);
+            
+            // Draw description in smaller font below
             context.font = `16px Orbitron, Arial, sans-serif`;
-            context.fillText(description, canvas.width / 2, canvas.height * 0.7);
+            context.fillStyle = 'rgba(255, 255, 255, 0.8)';
+            context.fillText(description, canvas.width / 2, canvas.height * 2/3);
+        } else {
+            // Center the text if no description
+            context.fillText(text, canvas.width / 2, canvas.height / 2);
         }
         
         // Add subtle glow
@@ -196,14 +351,12 @@ export class DifficultyMenu {
         context.fillStyle = 'rgba(255, 255, 255, 0.2)';
         
         // Redraw with glow
-        context.font = `bold 32px Orbitron, Arial, sans-serif`;
-        context.fillText(text, canvas.width / 2, canvas.height * 0.35);
-        
+        context.font = `bold ${fontSize}px Orbitron, Arial, sans-serif`;
         if (description) {
-            context.font = `16px Orbitron, Arial, sans-serif`;
-            context.fillText(description, canvas.width / 2, canvas.height * 0.7);
+            context.fillText(text, canvas.width / 2, canvas.height / 3);
+        } else {
+            context.fillText(text, canvas.width / 2, canvas.height / 2);
         }
-        
         context.globalCompositeOperation = 'source-over';
         
         // Update the texture
@@ -457,10 +610,8 @@ export class DifficultyMenu {
         
         // Create a raycaster for mouse picking
         const raycaster = new THREE.Raycaster();
-        const mouse = new THREE.Vector2(
-            (mouseX / window.innerWidth) * 2 - 1,
-            -(mouseY / window.innerHeight) * 2 + 1
-        );
+        // Since mouseX and mouseY are already normalized in Game.js, use them directly
+        const mouse = new THREE.Vector2(mouseX, mouseY);
         
         raycaster.setFromCamera(mouse, camera);
         
@@ -750,6 +901,15 @@ export class DifficultyMenu {
                                 this.buttons[key].rotation.y = 0;
                             }
                         }
+                        
+                        // Extra safety check - ensure button text is visible after animation completes
+                        if (this.isVisible) {
+                            console.log("DifficultyMenu: Animation complete - safety text refresh");
+                            this.recreateButtonTextCanvas(this.buttons.easy, 'EASY', 'Slow AI paddle');
+                            this.recreateButtonTextCanvas(this.buttons.medium, 'MEDIUM', 'Normal speed AI');
+                            this.recreateButtonTextCanvas(this.buttons.expert, 'EXPERT', 'Fast AI paddle');
+                            this.recreateButtonTextCanvas(this.buttons.back, 'BACK');
+                        }
                     }
                 }
                 
@@ -787,7 +947,38 @@ export class DifficultyMenu {
             }
         });
         
-        // Store original button positions
+        // Reset the menu position to its original position
+        if (this.menuGroup.userData.originalPosition) {
+            this.menuGroup.position.copy(this.menuGroup.userData.originalPosition);
+            console.log(`DifficultyMenu: Reset position to original: x=${this.menuGroup.position.x.toFixed(2)}, y=${this.menuGroup.position.y.toFixed(2)}, z=${this.menuGroup.position.z.toFixed(2)}`);
+        } else {
+            // If original position wasn't stored, reset to default
+            this.menuGroup.position.set(0, 1.6, -1.0);
+            console.log("DifficultyMenu: Original position not found, reset to default position");
+        }
+        
+        // Reset menu rotation completely
+        this.menuGroup.rotation.set(0, 0, 0);
+        
+        // Fully reset all button positions and scales to prevent cumulative effects
+        for (const key in this.buttons) {
+            if (this.buttons[key]) {
+                // Reset position Y to exactly what's in the stored value
+                if (this.buttons[key].userData.originalY !== undefined) {
+                    this.buttons[key].position.y = this.buttons[key].userData.originalY;
+                    // Also ensure Z position is reset (in case it was modified during button press)
+                    this.buttons[key].position.z = 0.02; // Original Z from createButton
+                }
+                
+                // Reset scale to exactly 1
+                this.buttons[key].scale.set(0.01, 0.01, 0.01); // Will be animated back to 1
+                
+                // Reset rotation
+                this.buttons[key].rotation.set(0, 0, 0);
+            }
+        }
+        
+        // Store original button positions after reset to ensure they're correct
         this.storeButtonPositions();
         
         // Make menu visible
@@ -795,12 +986,8 @@ export class DifficultyMenu {
         this.isVisible = true;
         this.showTime = Date.now();
         
-        // Set initial state for buttons
-        for (const key in this.buttons) {
-            if (this.buttons[key]) {
-                this.buttons[key].scale.set(0.01, 0.01, 0.01);
-            }
-        }
+        // Force immediate text recreation before the animation starts
+        this.forceTextUpdate();
         
         // Start animation
         this.menuGroup.scale.set(0.01, 0.01, 0.01);
@@ -815,13 +1002,19 @@ export class DifficultyMenu {
     }
     
     hide() {
-        // Start exit animation
-        this.animationDirection = 'out';
-        this.animationStartTime = Date.now();
-        this.isAnimating = true;
-        
-        // Trigger animation
-        this.animateMenuFunction();
+        // Only try to animate if animation function exists
+        if (this.animateMenuFunction) {
+            // Start exit animation
+            this.animationDirection = 'out';
+            this.animationStartTime = Date.now();
+            this.isAnimating = true;
+            
+            // Trigger animation
+            this.animateMenuFunction();
+        } else {
+            // Fallback if animation not set up yet
+            this.menuGroup.visible = false;
+        }
         
         // Menu will be fully hidden when animation completes
         this.isVisible = false;
@@ -830,6 +1023,9 @@ export class DifficultyMenu {
         if (this.currentHoveredButton) {
             this.unhighlightButton(this.currentHoveredButton);
         }
+        
+        // Log for debugging
+        console.log("DifficultyMenu: Hidden, cleaning up button states");
     }
     
     dispose() {
@@ -838,17 +1034,25 @@ export class DifficultyMenu {
             const button = this.buttons[buttonKey];
             if (button) {
                 // Dispose of geometries and materials
-                if (button.children[0]) {
-                    button.children[0].geometry.dispose();
-                    button.children[0].material.dispose();
-                }
-                if (button.children[1]) {
-                    button.children[1].geometry.dispose();
-                    button.children[1].material.dispose();
-                }
+                button.children.forEach(child => {
+                    if (child.geometry) child.geometry.dispose();
+                    if (child.material) {
+                        if (child.material.map) child.material.map.dispose();
+                        child.material.dispose();
+                    }
+                });
             }
         }
         
-        this.scene.remove(this.menuGroup);
+        // Remove from scene
+        if (this.scene) {
+            this.scene.remove(this.menuGroup);
+        }
+        
+        // Clear any animations in progress
+        this.isAnimating = false;
+        this.isVisible = false;
+        
+        console.log("DifficultyMenu: Resources disposed");
     }
 } 

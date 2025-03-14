@@ -206,8 +206,19 @@ export class Game {
         this.multiplayerMenu.setCallbacks({
             onSinglePlayer: () => {
                 console.log("Showing difficulty selection menu...");
+                // First hide the multiplayer menu
                 this.multiplayerMenu.hide();
-                this.difficultyMenu.show();
+                
+                // Add explicit delay and cleanup before showing the next menu
+                setTimeout(() => {
+                    // Ensure the difficulty menu is fully prepared with updated text
+                    if (this.difficultyMenu) {
+                        console.log("Game: Showing difficulty menu with delay for proper transition");
+                        // Force a text refresh before showing
+                        this.difficultyMenu.forceTextUpdate();
+                        this.difficultyMenu.show();
+                    }
+                }, 200);
             },
             onHost: () => {
                 if (this.multiplayerManager.isConnected) {
@@ -239,7 +250,11 @@ export class Game {
                 // Return to main menu
                 console.log("Returning to main menu");
                 this.multiplayerMenu.hide();
-                this.startButton.show();
+                
+                // Show start button after a short delay
+                setTimeout(() => {
+                    this.startButton.show();
+                }, 150);
             }
         });
     }
@@ -284,13 +299,24 @@ export class Game {
                     // Return to multiplayer menu
                     console.log("Returning to mode selection");
                     this.difficultyMenu.hide();
-                    this.multiplayerMenu.show();
+                    
+                    // Ensure all menu transitions are handled properly by adding a delay
+                    setTimeout(() => {
+                        console.log("Game: Returning to multiplayer menu with delay");
+                        // Always force text update on the menu we're showing
+                        if (this.multiplayerMenu) {
+                            // First force update the text
+                            this.multiplayerMenu.forceTextUpdate();
+                            // Then show the menu
+                            this.multiplayerMenu.show();
+                        }
+                    }, 200);
                 }
             });
             
             console.log("Difficulty menu initialized successfully");
         } catch (error) {
-            console.error("Error initializing difficulty menu:", error);
+            console.error("Error setting up difficulty menu:", error);
         }
     }
     
@@ -357,7 +383,7 @@ export class Game {
             
             // Handle 'ESC' key to exit menus or pause
             if (event.key === 'Escape') {
-                if (this.multiplayerMenu.isVisible) {
+                if (this.multiplayerMenu && this.multiplayerMenu.isVisible) {
                     this.multiplayerMenu.hide();
                     this.startButton.show();
                 }
@@ -588,7 +614,7 @@ export class Game {
                 }
                 
                 // Check multiplayer menu button intersections
-                if (this.multiplayerMenu.isVisible) {
+                if (this.multiplayerMenu && this.multiplayerMenu.isVisible) {
                     const singleplayerIntersects = raycaster.intersectObject(this.multiplayerMenu.buttons.singleplayer, true);
                     const hostIntersects = raycaster.intersectObject(this.multiplayerMenu.buttons.host, true);
                     const joinIntersects = raycaster.intersectObject(this.multiplayerMenu.buttons.join, true);
@@ -1027,6 +1053,14 @@ export class Game {
                     this.difficultyMenu.animateMenuFunction();
                 }
             }
+            
+            // Update multiplayer menu animations if active
+            if (this.multiplayerMenu && this.multiplayerMenu.isAnimating) {
+                // Trigger the animation update manually from the game loop
+                if (this.multiplayerMenu.animateMenuFunction) {
+                    this.multiplayerMenu.animateMenuFunction();
+                }
+            }
 
             if (this.vrController && this.isInVR) {
                 // Updated to pass both paddles to the controller
@@ -1178,7 +1212,7 @@ export class Game {
             }
                 
             // Handle multiplayer menu interactions
-            if (this.multiplayerMenu.isVisible && this.isInVR) {
+            if (this.multiplayerMenu && this.multiplayerMenu.isVisible && this.isInVR) {
                 const leftIntersects = this.multiplayerMenu.checkIntersection(this.vrController.controllers[0]);
                 const rightIntersects = this.multiplayerMenu.checkIntersection(this.vrController.controllers[1]);
                 
@@ -1924,6 +1958,9 @@ export class Game {
         
         // Emit gameStarted event for mobile controls
         this.emit('gameStarted');
+        
+        // Ensure menu text is refreshed (this will be called when showing menus)
+        this.refreshMenuText();
     }
 
     // Event emitter methods
@@ -1959,6 +1996,33 @@ export class Game {
             // Red for AI paddle
             this.aiPaddle.setColor(0xff0000);
             console.log("Set single player paddle colors: player=green, AI=red");
+        }
+    }
+
+    // Add a new method to force refresh menu text, useful for debugging
+    refreshMenuText() {
+        console.log("Forcing menu text refresh for all menus...");
+        
+        // Force text update for multiplayer menu
+        if (this.multiplayerMenu) {
+            this.multiplayerMenu.forceTextUpdate();
+            
+            // Also schedule additional text updates in case the menu becomes visible
+            if (this.multiplayerMenu.isVisible) {
+                console.log("Scheduling additional text refreshes for visible multiplayer menu");
+                this.multiplayerMenu.scheduleTextRefreshes();
+            }
+        }
+        
+        // Force text update for difficulty menu
+        if (this.difficultyMenu) {
+            this.difficultyMenu.forceTextUpdate();
+            
+            // Also schedule additional text updates in case the menu becomes visible
+            if (this.difficultyMenu.isVisible) {
+                console.log("Scheduling additional text refreshes for visible difficulty menu");
+                this.difficultyMenu.scheduleTextRefreshes();
+            }
         }
     }
 }
