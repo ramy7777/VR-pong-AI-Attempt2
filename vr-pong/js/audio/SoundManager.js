@@ -60,7 +60,10 @@ export class SoundManager {
             }),
 
             // Background music: progressive synth pattern
-            backgroundMusic: this.createProgressiveMusic()
+            backgroundMusic: this.createProgressiveMusic(),
+
+            // Goal sound: distinctive exciting sound for when a player scores
+            goalSound: this.createGoalSound()
         };
         
         // Keep track of background music state
@@ -343,5 +346,84 @@ export class SoundManager {
 
     playLose() {
         this.sounds.lose.play();
+    }
+
+    createGoalSound() {
+        return {
+            play: () => {
+                if (this.audioContext.state === 'suspended') {
+                    this.audioContext.resume();
+                }
+                
+                // Create master gain
+                const masterGain = this.audioContext.createGain();
+                masterGain.gain.setValueAtTime(0.3, this.audioContext.currentTime);
+                masterGain.connect(this.audioContext.destination);
+                
+                // Create a percussive impact
+                const impactOsc = this.audioContext.createOscillator();
+                const impactGain = this.audioContext.createGain();
+                
+                impactOsc.type = 'sawtooth';
+                impactOsc.frequency.setValueAtTime(150, this.audioContext.currentTime); // Low frequency
+                
+                impactGain.gain.setValueAtTime(0, this.audioContext.currentTime);
+                impactGain.gain.linearRampToValueAtTime(0.8, this.audioContext.currentTime + 0.01);
+                impactGain.gain.exponentialRampToValueAtTime(0.001, this.audioContext.currentTime + 0.5);
+                
+                impactOsc.connect(impactGain);
+                impactGain.connect(masterGain);
+                
+                impactOsc.start();
+                impactOsc.stop(this.audioContext.currentTime + 0.5);
+                
+                // Create a sweeping high pitch
+                const sweepOsc = this.audioContext.createOscillator();
+                const sweepGain = this.audioContext.createGain();
+                
+                sweepOsc.type = 'sine';
+                sweepOsc.frequency.setValueAtTime(400, this.audioContext.currentTime);
+                sweepOsc.frequency.exponentialRampToValueAtTime(1200, this.audioContext.currentTime + 0.3);
+                
+                sweepGain.gain.setValueAtTime(0, this.audioContext.currentTime);
+                sweepGain.gain.linearRampToValueAtTime(0.4, this.audioContext.currentTime + 0.05);
+                sweepGain.gain.exponentialRampToValueAtTime(0.001, this.audioContext.currentTime + 0.4);
+                
+                sweepOsc.connect(sweepGain);
+                sweepGain.connect(masterGain);
+                
+                sweepOsc.start();
+                sweepOsc.stop(this.audioContext.currentTime + 0.4);
+                
+                // Create a celebratory chord
+                setTimeout(() => {
+                    const celebratoryNotes = [72, 76, 79, 84]; // C5, E5, G5, C6
+                    
+                    celebratoryNotes.forEach((note, index) => {
+                        setTimeout(() => {
+                            const celebOsc = this.audioContext.createOscillator();
+                            const celebGain = this.audioContext.createGain();
+                            
+                            celebOsc.type = 'triangle';
+                            celebOsc.frequency.setValueAtTime(this.midiToFreq(note), this.audioContext.currentTime);
+                            
+                            celebGain.gain.setValueAtTime(0, this.audioContext.currentTime);
+                            celebGain.gain.linearRampToValueAtTime(0.3, this.audioContext.currentTime + 0.02);
+                            celebGain.gain.exponentialRampToValueAtTime(0.001, this.audioContext.currentTime + 0.3);
+                            
+                            celebOsc.connect(celebGain);
+                            celebGain.connect(masterGain);
+                            
+                            celebOsc.start();
+                            celebOsc.stop(this.audioContext.currentTime + 0.3);
+                        }, index * 60);
+                    });
+                }, 100);
+            }
+        };
+    }
+
+    playGoalSound() {
+        this.sounds.goalSound.play();
     }
 }

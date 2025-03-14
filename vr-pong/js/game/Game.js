@@ -900,7 +900,7 @@ export class Game {
             }
         } else if (type === 'goal') {
             if (this.soundManager) {
-                this.soundManager.playLose();
+                this.soundManager.playGoalSound();
             }
             
             // Flash the rails when a goal is scored
@@ -1301,7 +1301,7 @@ export class Game {
                             this.aiScore++;
                             this.aiScoreDisplay.updateScore(this.aiScore);
                             if (this.soundManager) {
-                                this.soundManager.playScore();
+                                this.soundManager.playGoalSound();
                             }
                             
                             // Flash the rails when AI scores
@@ -1326,6 +1326,8 @@ export class Game {
                                 this.multiplayerManager.updateScore(this.playerScore, this.aiScore);
                                 // Send rail flash event in multiplayer
                                 this.multiplayerManager.sendCustomEvent('rail_flash', { side: 'both' });
+                                // Send goal collision event for sound effects
+                                this.multiplayerManager.sendCollisionEvent('goal', { x: 0, y: 1, z: this.playerPaddle.getPaddle().position.z });
                             }
                             
                             // Start the ball again after short delay
@@ -1339,7 +1341,7 @@ export class Game {
                             this.playerScore++;
                             this.playerScoreDisplay.updateScore(this.playerScore);
                             if (this.soundManager) {
-                                this.soundManager.playScore();
+                                this.soundManager.playGoalSound();
                             }
                             
                             // Flash the rails when player scores
@@ -1364,6 +1366,8 @@ export class Game {
                                 this.multiplayerManager.updateScore(this.playerScore, this.aiScore);
                                 // Send rail flash event in multiplayer
                                 this.multiplayerManager.sendCustomEvent('rail_flash', { side: 'both' });
+                                // Send goal collision event for sound effects
+                                this.multiplayerManager.sendCollisionEvent('goal', { x: 0, y: 1, z: this.aiPaddle.getPaddle().position.z });
                             }
                             
                             // Start the ball again after short delay
