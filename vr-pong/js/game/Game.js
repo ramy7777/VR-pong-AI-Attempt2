@@ -47,9 +47,9 @@ export class Game {
         
         // AI difficulty settings
         this.aiDifficulty = {
-            easy: 0.10,     // Low difficulty - slower AI paddle
-            medium: 0.18,   // Medium difficulty
-            expert: 0.25    // Expert difficulty (current default)
+            easy: 0.15,     // Easy difficulty - much slower AI paddle (60% of original speed)
+            medium: 0.20,   // Medium difficulty - moderately slower (80% of original speed)
+            expert: 0.25    // Expert difficulty - unchanged from original behavior
         };
         this.currentAiDifficulty = this.aiDifficulty.expert; // Default to expert
         
