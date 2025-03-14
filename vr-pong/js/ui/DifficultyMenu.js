@@ -27,6 +27,12 @@ export class DifficultyMenu {
         // Track currently hovered button
         this.currentHoveredButton = null;
         
+        // Animation properties
+        this.animationDuration = 400; // ms
+        this.animationStartTime = 0;
+        this.isAnimating = false;
+        this.animationDirection = 'in'; // 'in' or 'out'
+        
         // Enhanced button properties with modern color scheme
         this.buttonColors = {
             easy: {
@@ -76,6 +82,15 @@ export class DifficultyMenu {
         
         // Make sure menu is hidden initially
         this.menuGroup.visible = false;
+        
+        // Set initial animation values
+        this.menuGroup.scale.set(0.01, 0.01, 0.01);
+        this.menuGroup.userData.originalPosition = this.menuGroup.position.clone();
+        this.menuGroup.userData.originalScale = new THREE.Vector3(1, 1, 1);
+        this.menuGroup.userData.originalOpacity = 1;
+        
+        // Set up animation update
+        this.setupAnimation();
     }
     
     preloadOrbitronFont() {
@@ -558,16 +573,210 @@ export class DifficultyMenu {
         this.callbacks = { ...this.callbacks, ...callbacks };
     }
     
+    setupAnimation() {
+        // Add this method to the animation loop in Game.js
+        const animateMenu = () => {
+            if (this.isAnimating) {
+                const now = Date.now();
+                const elapsed = now - this.animationStartTime;
+                const progress = Math.min(elapsed / this.animationDuration, 1);
+                
+                // Cubic ease-out animation curve
+                const eased = 1 - Math.pow(1 - progress, 3);
+                
+                if (this.animationDirection === 'in') {
+                    // Animate in
+                    const scale = 0.01 + (this.menuGroup.userData.originalScale.x - 0.01) * eased;
+                    this.menuGroup.scale.set(scale, scale, scale);
+                    
+                    // Add rotation effect during entry
+                    const maxRotation = 0.1; // Maximum rotation in radians
+                    const rotationX = maxRotation * (1 - eased);
+                    const rotationY = maxRotation * 0.5 * (1 - eased);
+                    this.menuGroup.rotation.x = rotationX;
+                    this.menuGroup.rotation.y = rotationY;
+                    
+                    // Optional: Add a slight bounce effect
+                    if (progress > 0.8) {
+                        const bounce = Math.sin((progress - 0.8) * 5 * Math.PI) * 0.03;
+                        this.menuGroup.scale.set(scale + bounce, scale + bounce, scale + bounce);
+                    }
+                    
+                    // Animate opacity for materials
+                    this.menuGroup.traverse((child) => {
+                        if (child.material && child.material.transparent) {
+                            child.material.opacity = eased * child.userData.originalOpacity;
+                        }
+                    });
+                    
+                    // Staggered animation for buttons
+                    const buttonDelay = 100; // ms between each button appearing
+                    const buttonKeys = ['easy', 'medium', 'expert', 'back'];
+                    
+                    buttonKeys.forEach((key, index) => {
+                        if (this.buttons[key]) {
+                            // Calculate delayed progress for each button
+                            const buttonDelayMs = index * buttonDelay;
+                            const buttonElapsed = elapsed - buttonDelayMs;
+                            const buttonProgress = Math.max(0, Math.min(buttonElapsed / this.animationDuration, 1));
+                            const buttonEased = 1 - Math.pow(1 - buttonProgress, 3);
+                            
+                            // Apply staggered scale to each button
+                            if (buttonProgress <= 0) {
+                                this.buttons[key].scale.set(0.01, 0.01, 0.01);
+                            } else {
+                                const buttonScale = 0.01 + 0.99 * buttonEased;
+                                this.buttons[key].scale.set(buttonScale, buttonScale, buttonScale);
+                                
+                                // Add slight upward movement as buttons appear
+                                const yOffset = (1 - buttonEased) * 0.1;
+                                this.buttons[key].position.y = this.buttons[key].userData.originalY - yOffset;
+                                
+                                // Add a slight rotation to each button
+                                const buttonRotation = (1 - buttonEased) * 0.2;
+                                this.buttons[key].rotation.y = buttonRotation;
+                            }
+                        }
+                    });
+                } else {
+                    // Animate out
+                    const scale = this.menuGroup.userData.originalScale.x - (this.menuGroup.userData.originalScale.x - 0.01) * eased;
+                    this.menuGroup.scale.set(scale, scale, scale);
+                    
+                    // Add rotation effect during exit (opposite direction)
+                    const maxRotation = 0.1; // Maximum rotation in radians
+                    const rotationX = -maxRotation * eased;
+                    const rotationY = -maxRotation * 0.5 * eased;
+                    this.menuGroup.rotation.x = rotationX;
+                    this.menuGroup.rotation.y = rotationY;
+                    
+                    // Staggered exit animation for buttons (reverse order)
+                    const buttonDelay = 50; // ms between each button disappearing (faster than entry)
+                    const buttonKeys = ['back', 'expert', 'medium', 'easy']; // Reverse order
+                    
+                    buttonKeys.forEach((key, index) => {
+                        if (this.buttons[key]) {
+                            // Calculate delayed progress for each button
+                            const buttonDelayMs = index * buttonDelay;
+                            const buttonElapsed = elapsed - buttonDelayMs;
+                            const buttonProgress = Math.max(0, Math.min(buttonElapsed / (this.animationDuration * 0.7), 1));
+                            const buttonEased = 1 - Math.pow(1 - buttonProgress, 3);
+                            
+                            // Apply staggered fade to each button
+                            const buttonScale = 1 - 0.99 * buttonEased;
+                            this.buttons[key].scale.set(buttonScale, buttonScale, buttonScale);
+                            
+                            // Add slight downward movement as buttons disappear
+                            const yOffset = buttonEased * 0.1;
+                            this.buttons[key].position.y = this.buttons[key].userData.originalY - yOffset;
+                            
+                            // Add a slight rotation to each button on exit
+                            const buttonRotation = buttonEased * -0.2; // Opposite direction
+                            this.buttons[key].rotation.y = buttonRotation;
+                        }
+                    });
+                    
+                    // Animate opacity for materials
+                    this.menuGroup.traverse((child) => {
+                        if (child.material && child.material.transparent) {
+                            child.material.opacity = (1 - eased) * child.userData.originalOpacity;
+                        }
+                    });
+                }
+                
+                // Check if animation is complete
+                if (progress >= 1) {
+                    this.isAnimating = false;
+                    
+                    // If animating out, actually hide the menu
+                    if (this.animationDirection === 'out') {
+                        this.menuGroup.visible = false;
+                    } else {
+                        // Reset rotations when entry animation completes
+                        this.menuGroup.rotation.x = 0;
+                        this.menuGroup.rotation.y = 0;
+                        
+                        // Reset button rotations
+                        for (const key in this.buttons) {
+                            if (this.buttons[key]) {
+                                this.buttons[key].rotation.y = 0;
+                            }
+                        }
+                    }
+                }
+                
+                // Continue animation in next frame
+                if (this.isAnimating) {
+                    requestAnimationFrame(animateMenu);
+                }
+            }
+        };
+        
+        // Store the animation function for cleanup
+        this.animateMenuFunction = animateMenu;
+    }
+    
+    // Method to store original button positions
+    storeButtonPositions() {
+        for (const key in this.buttons) {
+            if (this.buttons[key]) {
+                this.buttons[key].userData.originalY = this.buttons[key].position.y;
+                this.buttons[key].userData.originalScale = new THREE.Vector3(1, 1, 1);
+                this.buttons[key].userData.originalRotation = this.buttons[key].rotation.y;
+            }
+        }
+        
+        // Store original menu rotation
+        this.menuGroup.userData.originalRotationX = this.menuGroup.rotation.x;
+        this.menuGroup.userData.originalRotationY = this.menuGroup.rotation.y;
+    }
+    
     show() {
-        this.isVisible = true;
+        // Store the original opacity values for materials
+        this.menuGroup.traverse((child) => {
+            if (child.material && child.material.transparent) {
+                child.userData.originalOpacity = child.material.opacity;
+            }
+        });
+        
+        // Store original button positions
+        this.storeButtonPositions();
+        
+        // Make menu visible
         this.menuGroup.visible = true;
+        this.isVisible = true;
         this.showTime = Date.now();
-        console.log('Difficulty selection menu shown at', this.showTime);
+        
+        // Set initial state for buttons
+        for (const key in this.buttons) {
+            if (this.buttons[key]) {
+                this.buttons[key].scale.set(0.01, 0.01, 0.01);
+            }
+        }
+        
+        // Start animation
+        this.menuGroup.scale.set(0.01, 0.01, 0.01);
+        this.animationDirection = 'in';
+        this.animationStartTime = Date.now();
+        this.isAnimating = true;
+        
+        // Trigger animation
+        this.animateMenuFunction();
+        
+        console.log('Difficulty selection menu shown with animation at', this.showTime);
     }
     
     hide() {
+        // Start exit animation
+        this.animationDirection = 'out';
+        this.animationStartTime = Date.now();
+        this.isAnimating = true;
+        
+        // Trigger animation
+        this.animateMenuFunction();
+        
+        // Menu will be fully hidden when animation completes
         this.isVisible = false;
-        this.menuGroup.visible = false;
         
         // Reset any highlighted buttons when hiding the menu
         if (this.currentHoveredButton) {

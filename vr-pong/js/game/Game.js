@@ -1020,6 +1020,14 @@ export class Game {
             // Check if we're in VR
             this.isInVR = this.renderer.xr.isPresenting;
 
+            // Update menu animations if they're active
+            if (this.difficultyMenu && this.difficultyMenu.isAnimating) {
+                // Trigger the animation update manually from the game loop
+                if (this.difficultyMenu.animateMenuFunction) {
+                    this.difficultyMenu.animateMenuFunction();
+                }
+            }
+
             if (this.vrController && this.isInVR) {
                 // Updated to pass both paddles to the controller
                 this.vrController.checkControllerState(
