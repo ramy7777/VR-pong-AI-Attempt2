@@ -231,10 +231,12 @@ export class Paddle {
             const distanceToAI = Math.abs(ballPosition.z - (-1.9));
             const timeToReach = Math.abs(distanceToAI / ballVelocity.z);
             
+            // For Expert level, use full prediction ahead factor
+            // For lower difficulties, reduce prediction accuracy
+            const scaledPredictionFactor = this.predictionAheadFactor * (difficulty / 0.25);
+            
             // Predict X position on arrival
-            // For expert level (0.25), this should be highly accurate (use 0.9-1.0)
-            const predictionFactor = 0.9 * (difficulty / 0.25); // Scale with difficulty (max accurate at expert)
-            let predictedX = ballPosition.x + (ballVelocity.x * timeToReach * predictionFactor);
+            let predictedX = ballPosition.x + (ballVelocity.x * timeToReach * scaledPredictionFactor);
             
             // Apply some limits to the prediction to prevent over-committing
             predictedX = THREE.MathUtils.clamp(predictedX, -0.5, 0.5);
@@ -243,26 +245,26 @@ export class Paddle {
             targetX = predictedX;
         }
 
-        // Update prediction less frequently to allow AI to commit to movements
-        // Expert (0.25) updates frequently, easier levels less so
-        const baseUpdateInterval = 100; // Base update interval in ms
-        const updateFrequency = baseUpdateInterval * (0.25 / Math.max(0.1, difficulty)); // Slower updates for lower difficulty
+        // At expert level (0.25), use the original update interval
+        // For lower difficulties, update less frequently
+        const updateIntervalScaled = this.updateInterval * (0.25 / Math.max(0.1, difficulty));
         
-        if (currentTime - this.lastUpdateTime > updateFrequency) {
+        // Update prediction less frequently to allow AI to commit to movements
+        if (currentTime - this.lastUpdateTime > updateIntervalScaled) {
             // Calculate base target position with prediction
             let newTargetX = targetX;
 
-            // Add randomness scaled inversely with difficulty
-            const randomFactor = 0.005 + ((0.25 - difficulty) * 0.1); // More randomness for lower difficulty
-            const randomOffset = (Math.random() - 0.5) * randomFactor;
+            // Add random offset - more randomness for lower difficulties
+            const randomAmount = 0.005 + ((0.25 - difficulty) * 0.02);
+            const randomOffset = (Math.random() - 0.5) * randomAmount;
             newTargetX += randomOffset;
 
-            // Smooth transition to new target - expert should track quickly
-            const updateSpeed = 0.7 * (difficulty / 0.25); // Scale relative to expert (0.25)
+            // Smooth transition to new target - less responsive at lower difficulties
+            const updateSpeed = 0.7 * (difficulty / 0.25);
             this.lastPredictedX = this.lerp(
                 this.lastPredictedX,
                 newTargetX,
-                Math.max(0.1, updateSpeed) // Ensure at least some updating happens
+                Math.max(0.1, updateSpeed)
             );
 
             this.lastUpdateTime = currentTime;
@@ -276,26 +278,26 @@ export class Paddle {
         const direction = Math.sign(diff);
         const distance = Math.abs(diff);
         
-        // Expert (0.25) should move at full speed, scale down for easier levels
-        const baseSpeed = 0.05; // Maximum speed at expert
-        let speed = Math.min(distance * distance * 5, baseSpeed * (difficulty / 0.25));
+        // Scale speed by difficulty - expert (0.25) gets full speed
+        let speed = Math.min(distance * distance * 5, difficulty); 
         
         // Apply slowdown if active
         if (this.isSlowedDown) {
             speed *= this.slowdownFactor;
         }
-        
-        // Move towards target with higher precision for difficult AI
-        const precisionThreshold = 0.0005 + ((0.25 - difficulty) * 0.002); // Lower difficulty = less precise movements
+
+        // Move towards target with higher precision for expert AI, less for lower difficulties
+        const precisionThreshold = 0.0005 + ((0.25 - difficulty) * 0.001);
         if (Math.abs(diff) > precisionThreshold) {
             const movement = direction * speed;
             
-            // Scale smoothSpeed relative to expert level (0.25)
-            const smoothSpeedFactor = this.smoothSpeed * (difficulty / 0.25);
+            // Scale smooth speed by difficulty level - full smoothSpeed at expert level
+            const smoothSpeedScaled = this.smoothSpeed * (difficulty / 0.25);
+            
             const newX = this.lerp(
                 currentX,
                 currentX + movement,
-                this.isSlowedDown ? smoothSpeedFactor * this.slowdownFactor : smoothSpeedFactor
+                this.isSlowedDown ? smoothSpeedScaled * this.slowdownFactor : smoothSpeedScaled
             );
 
             // Apply position with constraints
