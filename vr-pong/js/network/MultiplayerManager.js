@@ -254,6 +254,20 @@ export class MultiplayerManager {
             this.isMultiplayerActive = false;
             this.game.showMessage('The other player has left the game', 3000);
         });
+
+        // Receive custom events
+        this.socket.on('remoteCustomEvent', (data) => {
+            console.log(`Received remote custom event: ${data.eventType}`, data);
+            
+            // Handle different custom events
+            if (data.eventType === 'rail_flash') {
+                // Flash the rails on the client side
+                if (this.game && this.game.environment) {
+                    this.game.environment.flashRail(data.side || 'both');
+                }
+            } 
+            // Add more custom event types as needed
+        });
     }
 
     // Host a new game
@@ -650,5 +664,22 @@ export class MultiplayerManager {
             this.voiceChat.cleanup();
             this.voiceChat = null;
         }
+    }
+
+    // Send custom event
+    sendCustomEvent(eventType, data = {}) {
+        if (!this.isMultiplayerActive || !this.roomId) return;
+        
+        // Add room ID to the data
+        const eventData = {
+            roomId: this.roomId,
+            eventType,
+            ...data
+        };
+        
+        console.log(`Sending custom event: ${eventType}`, eventData);
+        
+        // Emit the custom event to the server
+        this.socket.emit('customEvent', eventData);
     }
 }

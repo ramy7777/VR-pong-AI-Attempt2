@@ -896,6 +896,11 @@ export class Game {
             if (this.soundManager) {
                 this.soundManager.playLose();
             }
+            
+            // Flash the rails when a goal is scored
+            if (this.environment) {
+                this.environment.flashRail('both');
+            }
         }
         
         // Create a visual effect at the collision point
@@ -1290,6 +1295,11 @@ export class Game {
                                 this.soundManager.playScore();
                             }
                             
+                            // Flash the rails when AI scores
+                            if (this.environment) {
+                                this.environment.flashRail('both');
+                            }
+                            
                             // Emit score event for haptic feedback
                             this.emit('score', { side: 'ai' });
                             
@@ -1305,6 +1315,8 @@ export class Game {
                             // Sync scores in multiplayer mode
                             if (this.isMultiplayer && this.multiplayerManager && this.isLocalPlayer) {
                                 this.multiplayerManager.updateScore(this.playerScore, this.aiScore);
+                                // Send rail flash event in multiplayer
+                                this.multiplayerManager.sendCustomEvent('rail_flash', { side: 'both' });
                             }
                             
                             // Start the ball again after short delay
@@ -1319,6 +1331,11 @@ export class Game {
                             this.playerScoreDisplay.updateScore(this.playerScore);
                             if (this.soundManager) {
                                 this.soundManager.playScore();
+                            }
+                            
+                            // Flash the rails when player scores
+                            if (this.environment) {
+                                this.environment.flashRail('both');
                             }
                             
                             // Emit score event for haptic feedback
@@ -1336,6 +1353,8 @@ export class Game {
                             // Sync scores in multiplayer mode
                             if (this.isMultiplayer && this.multiplayerManager && this.isLocalPlayer) {
                                 this.multiplayerManager.updateScore(this.playerScore, this.aiScore);
+                                // Send rail flash event in multiplayer
+                                this.multiplayerManager.sendCustomEvent('rail_flash', { side: 'both' });
                             }
                             
                             // Start the ball again after short delay

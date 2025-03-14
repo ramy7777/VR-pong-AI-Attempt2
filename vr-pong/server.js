@@ -454,6 +454,22 @@ io.on('connection', (socket) => {
         }
     });
     
+    // Handle custom events
+    socket.on('customEvent', (data) => {
+        const { roomId, eventType, ...rest } = data;
+        
+        if (gameRooms[roomId]) {
+            console.log(`Received custom event from ${socket.id}: ${eventType}`);
+            // Broadcast the custom event to other players in the room
+            socket.to(roomId).emit('remoteCustomEvent', {
+                eventType,
+                ...rest
+            });
+        } else {
+            console.log(`Custom event for non-existent room: ${roomId}`);
+        }
+    });
+    
     // Handle VR controller data
     socket.on('updateControllerData', (data) => {
         const { roomId, isHost, leftController, rightController, head } = data;
