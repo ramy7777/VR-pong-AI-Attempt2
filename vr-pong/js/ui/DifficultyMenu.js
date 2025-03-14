@@ -17,18 +17,18 @@ export class DifficultyMenu {
         
         // For debouncing button presses
         this.lastButtonPressed = '';
-        this.buttonCooldown = 300; // ms
+        this.buttonCooldown = 300; // ms - match MultiplayerMenu
         this.lastPressTime = 0;
         
         // Add a buffer time when menu first appears to prevent accidental button presses
         this.showTime = 0;
-        this.showDelay = 1000; // 1 second delay after showing before accepting input
+        this.showDelay = 1000; // ms - match MultiplayerMenu
         
         // Track currently hovered button
         this.currentHoveredButton = null;
         
         // Animation properties
-        this.animationDuration = 400; // ms
+        this.animationDuration = 400; // ms - match MultiplayerMenu
         this.animationStartTime = 0;
         this.isAnimating = false;
         this.animationDirection = 'in'; // 'in' or 'out'
@@ -91,6 +91,22 @@ export class DifficultyMenu {
         
         // Set up animation update
         this.setupAnimation();
+        
+        // Store menu scale
+        this.menuGroup.userData = {
+            originalScale: new THREE.Vector3(1, 1, 1)
+        };
+        
+        // Store menu rotation
+        this.menuGroup.userData.originalRotationX = this.menuGroup.rotation.x;
+        this.menuGroup.userData.originalRotationY = this.menuGroup.rotation.y;
+        
+        // Store button positions
+        this.storeButtonPositions();
+        
+        // Store hover animations
+        this.hoverAnimations = {};
+        this.hoverTweens = {};
     }
     
     preloadOrbitronFont() {
@@ -464,7 +480,7 @@ export class DifficultyMenu {
         return null;
     }
     
-    // Highlight a button on hover
+    // Highlight a button on hover - match MultiplayerMenu implementation with enhanced z movement
     highlightButton(buttonKey) {
         if (!this.buttons[buttonKey]) return;
         
@@ -476,8 +492,16 @@ export class DifficultyMenu {
         buttonMesh.material.emissive.setHex(buttonMesh.userData.hoverColor);
         buttonMesh.material.emissiveIntensity = 0.5;
         
+        // Store the original position if not already stored
+        if (!this.buttons[buttonKey].userData.originalZ) {
+            this.buttons[buttonKey].userData.originalZ = this.buttons[buttonKey].position.z;
+        }
+        
         // Apply enhanced hover effect with smoother animation
         this.buttons[buttonKey].scale.set(1.1, 1.1, 1.1);
+        
+        // Move button SIGNIFICANTLY forward for better 3D effect - use a larger value for more noticeable movement
+        this.buttons[buttonKey].position.z = this.buttons[buttonKey].userData.originalZ + 0.05;
         
         // Add a subtle glow effect
         const edgeMesh = buttonMesh.children[0];
@@ -489,7 +513,7 @@ export class DifficultyMenu {
         this.currentHoveredButton = buttonKey;
     }
     
-    // Unhighlight a button
+    // Unhighlight a button - match MultiplayerMenu implementation with enhanced z movement
     unhighlightButton(buttonKey) {
         if (!this.buttons[buttonKey]) return;
         
@@ -504,6 +528,11 @@ export class DifficultyMenu {
         // Reset scale
         this.buttons[buttonKey].scale.set(1.0, 1.0, 1.0);
         
+        // Move button back to original position
+        if (this.buttons[buttonKey].userData.originalZ !== undefined) {
+            this.buttons[buttonKey].position.z = this.buttons[buttonKey].userData.originalZ;
+        }
+        
         // Reset glow
         const edgeMesh = buttonMesh.children[0];
         if (edgeMesh) {
@@ -514,36 +543,48 @@ export class DifficultyMenu {
         this.currentHoveredButton = null;
     }
     
-    // Press a button with debounce
+    // Press a button with debounce - match MultiplayerMenu implementation
     pressButton(buttonKey) {
         const now = Date.now();
         
         // Skip intersection checks if we're still in the initial delay period
         if (now - this.showTime < this.showDelay) {
+            console.log(`DifficultyMenu: Button ${buttonKey} press ignored (still in show delay): ${now - this.showTime}ms since menu shown. Menu shown at: ${this.showTime}, Current time: ${now}, Delay period: ${this.showDelay}ms`);
             return;
         }
         
         // Debounce to prevent multiple rapid presses
         if (now - this.lastPressTime < this.buttonCooldown) {
+            console.log(`DifficultyMenu: Button ${buttonKey} press ignored (cooldown active): ${now - this.lastPressTime}ms since last press. Last press: ${this.lastPressTime}, Current time: ${now}, Cooldown: ${this.buttonCooldown}ms`);
             return;
         }
         
         if (!this.buttons[buttonKey]) return;
         
+        console.log(`DifficultyMenu: Button ${buttonKey} pressed successfully at ${now}`);
         this.lastPressTime = now;
         this.lastButtonPressed = buttonKey;
         
         // Get the button mesh
-        const buttonGroup = this.buttons[buttonKey];
-        const buttonMesh = buttonGroup.children[0];
+        const buttonMesh = this.buttons[buttonKey].children[0];
+        
+        // Store the original position if not stored already (to handle case where hover was skipped)
+        if (!this.buttons[buttonKey].userData.originalZ) {
+            this.buttons[buttonKey].userData.originalZ = this.buttons[buttonKey].position.z;
+        }
         
         // Visual feedback - press animation
         buttonMesh.material.color.setHex(buttonMesh.userData.clickColor);
         buttonMesh.material.emissive.setHex(buttonMesh.userData.clickColor);
-        buttonGroup.position.z -= 0.01;
+        buttonMesh.material.emissiveIntensity = 0.3;
+        
+        // Apply enhanced click effect
+        this.buttons[buttonKey].position.z = this.buttons[buttonKey].userData.originalZ; // Reset to original first
+        this.buttons[buttonKey].position.z += 0.01; // Move slightly forward when pressed
+        this.buttons[buttonKey].scale.set(0.95, 0.95, 1.0);
         
         // Execute the callback based on button type
-        console.log(`Difficulty ${buttonKey} selected`);
+        console.log(`DifficultyMenu: Executing callback for button: ${buttonKey}`);
         switch (buttonKey) {
             case 'easy':
                 if (this.callbacks.onEasy) this.callbacks.onEasy();
@@ -559,14 +600,21 @@ export class DifficultyMenu {
                 break;
         }
         
-        // Reset button state after a delay
+        // Reset button state after 300ms (matching the transition duration)
+        console.log(`DifficultyMenu: Setting timeout to reset button ${buttonKey} in 300ms`);
         setTimeout(() => {
             if (this.buttons[buttonKey]) {
-                buttonMesh.material.color.setHex(buttonMesh.userData.originalColor);
-                buttonMesh.material.emissive.setHex(buttonMesh.userData.originalColor);
-                buttonGroup.position.z += 0.01;
+                // Reset to original position
+                if (this.buttons[buttonKey].userData.originalZ !== undefined) {
+                    this.buttons[buttonKey].position.z = this.buttons[buttonKey].userData.originalZ;
+                } else {
+                    this.buttons[buttonKey].position.z -= 0.01;
+                }
+                this.buttons[buttonKey].scale.set(1.0, 1.0, 1.0);
+                this.unhighlightButton(buttonKey);
+                console.log(`DifficultyMenu: Button ${buttonKey} reset completed`);
             }
-        }, 200);
+        }, 300);
     }
     
     setCallbacks(callbacks) {

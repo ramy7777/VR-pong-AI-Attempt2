@@ -182,6 +182,14 @@ export class MultiplayerManager {
             this.roomId = null;
             this.isHost = false;
             this.opponentId = null;
+            
+            // Show the multiplayer menu again
+            if (this.game.multiplayerMenu) {
+                setTimeout(() => {
+                    console.log('Reopening multiplayer menu after no games found');
+                    this.game.multiplayerMenu.show();
+                }, 1000); // Small delay to ensure message is seen
+            }
         });
 
         // Error message
