@@ -52,6 +52,17 @@ class OpenAIVoiceAssistant {
         this.lastCollisionTime = 0;
         this.gameplayTipsTimer = null;
         
+        // Game timing tracking
+        this.gameStartTime = 0;
+        this.currentGameTime = 0;
+        this.matchTimeElapsed = 0;
+        this.rallyStartTime = 0;
+        this.currentRallyDuration = 0;
+        this.lastRallyDuration = 0;
+        this.aiSlowdownActive = false;
+        this.aiSlowdownStartTime = 0;
+        this.aiSlowdownDuration = 0;
+        
         // Message handling
         this.messageQueue = [];
         this.processingQueue = false;
@@ -108,6 +119,12 @@ class OpenAIVoiceAssistant {
             this.playerScore = 0;
             this.aiScore = 0;
             
+            // Track game timing
+            this.gameStartTime = Date.now();
+            this.rallyStartTime = this.gameStartTime;
+            this.currentGameTime = 0;
+            this.matchTimeElapsed = 0;
+            
             // If connected, send a game start notification
             if (this.connected) {
                 this.sendGameStateUpdate('game_started');
@@ -120,6 +137,12 @@ class OpenAIVoiceAssistant {
         document.addEventListener('game-ended', () => {
             console.log('Game ended');
             this.gameInProgress = false;
+            
+            // Calculate final match time
+            if (this.gameStartTime > 0) {
+                this.matchTimeElapsed = Math.floor((Date.now() - this.gameStartTime) / 1000);
+                console.log(`Game ended after ${this.matchTimeElapsed} seconds`);
+            }
             
             // Stop gameplay tips timer
             this.stopGameplayTipsTimer();
@@ -139,6 +162,15 @@ class OpenAIVoiceAssistant {
                     // Update stored scores
                     this.playerScore = playerScore;
                     this.aiScore = aiScore;
+                    
+                    // Calculate rally duration
+                    if (this.rallyStartTime > 0) {
+                        this.lastRallyDuration = Math.floor((Date.now() - this.rallyStartTime) / 1000);
+                    }
+                    
+                    // Start a new rally timer
+                    this.rallyStartTime = Date.now();
+                    this.currentRallyDuration = 0;
                     
                     console.log(`Score updated: Player ${playerScore} - AI ${aiScore}, Scorer: ${scorer}`);
                     
@@ -176,6 +208,11 @@ class OpenAIVoiceAssistant {
                     this.lastCollisionType = type;
                     this.lastCollisionTime = Date.now();
                     
+                    // Update current rally duration
+                    if (this.rallyStartTime > 0) {
+                        this.currentRallyDuration = Math.floor((Date.now() - this.rallyStartTime) / 1000);
+                    }
+                    
                     // If connected, potentially send a collision update
                     if (this.connected && this.gameInProgress) {
                         // Only send for significant events to avoid spam
@@ -190,6 +227,49 @@ class OpenAIVoiceAssistant {
                 console.error('Error handling collision event:', error);
             }
         });
+        
+        // Listen for AI slowdown events
+        document.addEventListener('ai-slowdown-started', (event) => {
+            try {
+                console.log('AI slowdown started');
+                this.aiSlowdownActive = true;
+                this.aiSlowdownStartTime = Date.now();
+                this.aiSlowdownDuration = event.detail ? event.detail.duration : 1500; // Default 1.5 seconds
+                
+                // If connected, send an AI slowdown notification
+                if (this.connected && this.gameInProgress) {
+                    this.sendGameStateUpdate('ai_slowdown');
+                }
+            } catch (error) {
+                console.error('Error handling AI slowdown start event:', error);
+            }
+        });
+        
+        document.addEventListener('ai-slowdown-ended', () => {
+            try {
+                console.log('AI slowdown ended');
+                this.aiSlowdownActive = false;
+                
+                // If connected, send an AI speed restored notification
+                if (this.connected && this.gameInProgress) {
+                    this.sendGameStateUpdate('ai_speed_restored');
+                }
+            } catch (error) {
+                console.error('Error handling AI slowdown end event:', error);
+            }
+        });
+        
+        // Add interval to update game time
+        setInterval(() => {
+            if (this.gameInProgress && this.gameStartTime > 0) {
+                this.currentGameTime = Math.floor((Date.now() - this.gameStartTime) / 1000);
+                
+                // Update rally duration if a rally is in progress
+                if (this.rallyStartTime > 0) {
+                    this.currentRallyDuration = Math.floor((Date.now() - this.rallyStartTime) / 1000);
+                }
+            }
+        }, 1000);
     }
     
     createRemoteAudioElement() {
@@ -1404,39 +1484,51 @@ class OpenAIVoiceAssistant {
                     
                 case 'game_ended':
                     const finalScore = `${this.playerScore}-${this.aiScore}`;
+                    const matchDuration = this.matchTimeElapsed > 0 ? ` Match lasted ${this.matchTimeElapsed} seconds.` : '';
+                    
                     if (this.playerScore > this.aiScore) {
-                        updateMessage = `Game has ended. Player wins with a score of ${finalScore}!`;
+                        updateMessage = `Game has ended. Player wins with a score of ${finalScore}!${matchDuration}`;
                     } else if (this.playerScore < this.aiScore) {
-                        updateMessage = `Game has ended. AI wins with a score of ${finalScore}.`;
+                        updateMessage = `Game has ended. AI wins with a score of ${finalScore}.${matchDuration}`;
                     } else {
-                        updateMessage = `Game has ended in a tie with a score of ${finalScore}.`;
+                        updateMessage = `Game has ended in a tie with a score of ${finalScore}.${matchDuration}`;
                     }
                     break;
                     
                 case 'player_scored':
-                    const playerScoreMessage = `Player scored a point! The score is now ${this.playerScore}-${this.aiScore}.`;
+                    const rallyInfo = this.lastRallyDuration > 0 ? ` Rally lasted ${this.lastRallyDuration} seconds.` : '';
+                    const playerScoreMessage = `Player scored a point! The score is now ${this.playerScore}-${this.aiScore}.${rallyInfo}`;
                     // Add extra encouragement for consecutive player scores
                     updateMessage = playerScoreMessage;
                     break;
                     
                 case 'ai_scored':
-                    const aiScoreMessage = `AI scored a point. The score is now ${this.playerScore}-${this.aiScore}.`;
+                    const aiRallyInfo = this.lastRallyDuration > 0 ? ` Rally lasted ${this.lastRallyDuration} seconds.` : '';
+                    const aiScoreMessage = `AI scored a point. The score is now ${this.playerScore}-${this.aiScore}.${aiRallyInfo}`;
                     updateMessage = aiScoreMessage;
                     break;
                     
                 case 'paddle_hit':
                     // Randomize paddle hit messages for variety
                     const paddleMessages = [
-                        "Player hit the ball with their paddle.",
-                        "Nice paddle contact by the player.",
-                        "The ball was returned with the paddle.",
-                        "Good paddle control on that return!"
+                        `Player hit the ball with their paddle. Rally has been going for ${this.currentRallyDuration} seconds.`,
+                        `Nice paddle contact by the player. Current rally: ${this.currentRallyDuration} seconds.`,
+                        `The ball was returned with the paddle. Rally time: ${this.currentRallyDuration} seconds.`,
+                        `Good paddle control on that return! Rally has lasted ${this.currentRallyDuration} seconds so far.`
                     ];
                     updateMessage = paddleMessages[Math.floor(Math.random() * paddleMessages.length)];
                     break;
                     
                 case 'wall_hit':
-                    updateMessage = "The ball hit a wall boundary.";
+                    updateMessage = `The ball hit a wall boundary. Current rally: ${this.currentRallyDuration} seconds.`;
+                    break;
+                
+                case 'ai_slowdown':
+                    updateMessage = "The AI paddle is temporarily slowing down. Player has an advantage for a few seconds.";
+                    break;
+                    
+                case 'ai_speed_restored':
+                    updateMessage = "The AI paddle has returned to normal speed.";
                     break;
                     
                 default:
@@ -1506,6 +1598,11 @@ class OpenAIVoiceAssistant {
             gameStatus = 'No game in progress';
         }
         
+        // Include timing information
+        const gameTimeInfo = this.gameInProgress ? `Game time elapsed: ${this.currentGameTime} seconds` : 'No game in progress';
+        const rallyInfo = this.gameInProgress ? `Current rally duration: ${this.currentRallyDuration} seconds` : 'No active rally';
+        const aiSlowdownInfo = this.aiSlowdownActive ? 'AI paddle is currently slowed down' : 'AI paddle is at normal speed';
+        
         const instructions = `
 You are an enthusiastic AI voice assistant integrated into a Virtual Reality Pong game. Your role is to provide real-time commentary, tips, and make the game more engaging.
 
@@ -1513,14 +1610,17 @@ Current Game State:
 - Game Active: ${this.gameInProgress ? 'Yes' : 'No'}
 - Current Score: ${currentScore} 
 - Status: ${gameStatus}
+- ${gameTimeInfo}
+- ${rallyInfo}
+- ${aiSlowdownInfo}
 
 Be conversational and energetic in your responses, like a sports commentator. Keep responses brief (1-2 sentences) so they don't interrupt gameplay.
 
 Your capabilities in this VR Pong game:
 1. Provide real-time commentary on game events (rallies, scores, near misses)
 2. Offer strategic tips when appropriate
-3. Respond to player questions about the game
-4. Make encouraging remarks after points
+3. Comment on the AI's occasional slowdowns when they happen
+4. Make remarks about long rallies and their duration
 5. Add humor and personality to make the game more fun
 
 Do not mention anything about being an AI language model, focus only on your role as a game commentator.

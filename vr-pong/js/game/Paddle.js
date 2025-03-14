@@ -18,6 +18,15 @@ export class Paddle {
         this.maxSpeed = 0.05; // Increased maximum speed to 0.05 (was 0.04)
         this.predictionAheadFactor = 0.2; // New parameter for lookahead prediction
         
+        // Add slowdown variables
+        this.isSlowedDown = false;
+        this.slowdownFactor = 0.3; // How much to slow down (30% of normal speed)
+        this.slowdownDuration = 0; // Current duration of slowdown in ms
+        this.maxSlowdownDuration = 1500; // Maximum slowdown duration in ms
+        this.lastSlowdownCheck = 0;
+        this.slowdownCheckInterval = 5000; // Check every 5 seconds if we should slow down
+        this.slowdownChance = 0.15; // 15% chance of slowing down when checked
+        
         // Add ownership tracking
         this.paddleIndex = paddleIndex; // 0 for first paddle, 1 for second paddle
         this.ownerId = null; // Stores the player's ID who owns this paddle
@@ -143,10 +152,48 @@ export class Paddle {
         return start * (1 - t) + end * t;
     }
 
+    // Add a new method to check if we should apply a random slowdown
+    checkRandomSlowdown(currentTime) {
+        if (!this.isAI) return; // Only apply to AI paddle
+
+        // Check if we need to end the current slowdown
+        if (this.isSlowedDown && currentTime - this.slowdownDuration > this.maxSlowdownDuration) {
+            this.isSlowedDown = false;
+            console.log('AI paddle: Speed restored to normal');
+            
+            // Emit an event that the slowdown ended
+            const event = new CustomEvent('ai-slowdown-ended');
+            document.dispatchEvent(event);
+        }
+
+        // Only check for new slowdown if not currently slowed and enough time has passed
+        if (!this.isSlowedDown && currentTime - this.lastSlowdownCheck > this.slowdownCheckInterval) {
+            this.lastSlowdownCheck = currentTime;
+            
+            // Random chance to start a slowdown
+            if (Math.random() < this.slowdownChance) {
+                this.isSlowedDown = true;
+                this.slowdownDuration = currentTime;
+                console.log('AI paddle: Temporarily slowing down');
+                
+                // Emit an event that the AI has slowed down
+                const event = new CustomEvent('ai-slowdown-started', {
+                    detail: {
+                        duration: this.maxSlowdownDuration
+                    }
+                });
+                document.dispatchEvent(event);
+            }
+        }
+    }
+
     updateAI(ball, difficulty = 0.25) { // Increased base difficulty (was 0.15)
         if (!this.isAI) return;
 
         const currentTime = performance.now();
+        
+        // Check if we should apply a random slowdown
+        this.checkRandomSlowdown(currentTime);
         
         // Get ball position and velocity for prediction
         const ballPosition = ball.position;
@@ -205,6 +252,11 @@ export class Paddle {
         const direction = Math.sign(diff);
         const distance = Math.abs(diff);
         let speed = Math.min(distance * distance * 5, difficulty); // Increased acceleration factor (was 4)
+        
+        // Apply slowdown if active
+        if (this.isSlowedDown) {
+            speed *= this.slowdownFactor;
+        }
 
         // Move towards target with higher precision for difficult AI
         if (Math.abs(diff) > 0.0005) { // Reduced threshold for higher precision
@@ -212,7 +264,7 @@ export class Paddle {
             const newX = this.lerp(
                 currentX,
                 currentX + movement,
-                this.smoothSpeed
+                this.isSlowedDown ? this.smoothSpeed * this.slowdownFactor : this.smoothSpeed
             );
 
             // Apply position with constraints
