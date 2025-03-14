@@ -6,6 +6,7 @@ export class FinalScoreDisplay {
         this.visible = false;
         this.playerScore = 0;
         this.aiScore = 0;
+        this.isMultiplayer = false; // Add flag for multiplayer mode
         
         // Create canvas for the final score display
         this.canvas = document.createElement('canvas');
@@ -37,9 +38,10 @@ export class FinalScoreDisplay {
         this.scene.add(this.mesh);
     }
     
-    show(playerScore, aiScore) {
+    show(playerScore, aiScore, isMultiplayer = false) {
         this.playerScore = playerScore;
         this.aiScore = aiScore;
+        this.isMultiplayer = isMultiplayer;
         this.updateDisplay();
         this.mesh.visible = true;
         this.visible = true;
@@ -93,23 +95,34 @@ export class FinalScoreDisplay {
         
         if (this.playerScore > this.aiScore) {
             playerColor = '#4CAF50'; // Green for winner
-            resultText = 'YOU WIN!';
+            resultText = this.isMultiplayer ? 'YOU WIN!' : 'YOU WIN!';
         } else if (this.aiScore > this.playerScore) {
             aiColor = '#4CAF50'; // Green for winner
-            resultText = 'AI WINS!';
+            resultText = this.isMultiplayer ? 'OPPONENT WINS!' : 'AI WINS!';
         }
+        
+        // Left side label
+        this.context.fillStyle = '#FFFFFF';
+        this.context.font = 'bold 50px Arial';
+        this.context.fillText(this.isMultiplayer ? 'YOU' : 'YOU', this.canvas.width / 2 - 150, 210);
+        
+        // Right side label
+        this.context.fillStyle = '#FFFFFF';
+        this.context.font = 'bold 50px Arial';
+        this.context.fillText(this.isMultiplayer ? 'OPPONENT' : 'AI', this.canvas.width / 2 + 150, 210);
         
         // Player score
         this.context.fillStyle = playerColor;
-        this.context.fillText(this.playerScore.toString(), this.canvas.width / 2 - 150, 250);
+        this.context.font = 'bold 130px Arial';
+        this.context.fillText(this.playerScore.toString(), this.canvas.width / 2 - 150, 280);
         
         // Score separator
         this.context.fillStyle = '#FFFFFF';
-        this.context.fillText('-', this.canvas.width / 2, 250);
+        this.context.fillText('-', this.canvas.width / 2, 280);
         
         // AI score
         this.context.fillStyle = aiColor;
-        this.context.fillText(this.aiScore.toString(), this.canvas.width / 2 + 150, 250);
+        this.context.fillText(this.aiScore.toString(), this.canvas.width / 2 + 150, 280);
         
         // Draw result text
         this.context.fillStyle = '#FFD54F'; // Gold color
@@ -122,7 +135,7 @@ export class FinalScoreDisplay {
         this.texture.needsUpdate = true;
     }
     
-    // Helper function to draw rounded rectangles
+    // Helper method to draw rounded rectangles
     roundRect(ctx, x, y, width, height, radius) {
         if (width < 2 * radius) radius = width / 2;
         if (height < 2 * radius) radius = height / 2;

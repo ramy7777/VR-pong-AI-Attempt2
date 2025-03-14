@@ -8,14 +8,15 @@ export class Paddle {
         this.height = 0.1;     // Keep height the same for visibility
         this.depth = 0.02;     // Make it much thinner (was 0.1)
         this.targetPosition = new THREE.Vector3();
-        this.smoothSpeed = 0.35; // Increased from 0.25 for even faster AI movement
+        this.smoothSpeed = 0.45; // Increased from 0.35 for even faster AI movement
         this.lastPredictedX = 0;
         this.lastUpdateTime = 0;
-        this.updateInterval = 30; // Update even more frequently (was 40)
+        this.updateInterval = 25; // Update more frequently (was 30) for faster reactions
         this.initialSpeed = 0.015;
         this.currentSpeed = this.initialSpeed;
         this.speedIncrement = 0.001; // Small increment for AI speed
-        this.maxSpeed = 0.04; // Increased maximum speed to 0.04
+        this.maxSpeed = 0.05; // Increased maximum speed to 0.05 (was 0.04)
+        this.predictionAheadFactor = 0.2; // New parameter for lookahead prediction
         
         // Add ownership tracking
         this.paddleIndex = paddleIndex; // 0 for first paddle, 1 for second paddle
@@ -142,26 +143,55 @@ export class Paddle {
         return start * (1 - t) + end * t;
     }
 
-    updateAI(ball, difficulty = 0.15) { // Increased base difficulty
+    updateAI(ball, difficulty = 0.25) { // Increased base difficulty (was 0.15)
         if (!this.isAI) return;
 
         const currentTime = performance.now();
-        const targetX = ball.position.x;
+        
+        // Get ball position and velocity for prediction
+        const ballPosition = ball.position;
+        let ballVelocity = new THREE.Vector3(0, 0, 0);
+        
+        // Try to get ball velocity if available
+        if (ball.ballVelocity) {
+            ballVelocity = ball.ballVelocity;
+        } else if (ball.getBallVelocity && typeof ball.getBallVelocity === 'function') {
+            ballVelocity = ball.getBallVelocity();
+        }
+        
+        // Predict where the ball will be - more advanced prediction
+        let targetX = ballPosition.x;
+        
+        // If the ball is moving toward the AI paddle, predict where it will intersect
+        if (ballVelocity && ballVelocity.z < 0) {
+            // Calculate time to reach paddle plane based on current Z position and velocity
+            const distanceToAI = Math.abs(ballPosition.z - (-1.9));
+            const timeToReach = Math.abs(distanceToAI / ballVelocity.z);
+            
+            // Predict X position on arrival
+            let predictedX = ballPosition.x + (ballVelocity.x * timeToReach * this.predictionAheadFactor);
+            
+            // Apply some limits to the prediction to prevent over-committing
+            predictedX = THREE.MathUtils.clamp(predictedX, -0.5, 0.5);
+            
+            // Use predicted position
+            targetX = predictedX;
+        }
 
-        // Update prediction less frequently
+        // Update prediction less frequently to allow AI to commit to movements
         if (currentTime - this.lastUpdateTime > this.updateInterval) {
-            // Calculate base target position
+            // Calculate base target position with prediction
             let newTargetX = targetX;
 
-            // Add very small random offset for natural movement
-            const randomOffset = (Math.random() - 0.5) * 0.01; // Reduced randomness
+            // Add very small random offset for natural movement (reduced further)
+            const randomOffset = (Math.random() - 0.5) * 0.005; // Reduced randomness for more precision
             newTargetX += randomOffset;
 
             // Smooth transition to new target
             this.lastPredictedX = this.lerp(
                 this.lastPredictedX,
                 newTargetX,
-                0.5 // Faster target updating
+                0.7 // Faster target updating (was 0.5)
             );
 
             this.lastUpdateTime = currentTime;
@@ -171,13 +201,13 @@ export class Paddle {
         const currentX = this.paddle.position.x;
         const diff = this.lastPredictedX - currentX;
         
-        // Use quadratic easing for smoother acceleration/deceleration
+        // Use cubic easing for more aggressive acceleration/deceleration
         const direction = Math.sign(diff);
         const distance = Math.abs(diff);
-        let speed = Math.min(distance * distance * 4, difficulty); // Increased acceleration
+        let speed = Math.min(distance * distance * 5, difficulty); // Increased acceleration factor (was 4)
 
-        // Move towards target
-        if (Math.abs(diff) > 0.001) {
+        // Move towards target with higher precision for difficult AI
+        if (Math.abs(diff) > 0.0005) { // Reduced threshold for higher precision
             const movement = direction * speed;
             const newX = this.lerp(
                 currentX,

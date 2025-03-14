@@ -484,7 +484,7 @@ export class Game {
                                     this.showMessage("Failed to restart the game!", 3000);
                                     
                                     // Show the UI elements again 
-                                    this.finalScoreDisplay.show(this.playerScore, this.aiScore);
+                                    this.finalScoreDisplay.show(this.playerScore, this.aiScore, this.isMultiplayer);
                                     this.restartButton.show();
                                 }
                             } else {
@@ -557,14 +557,14 @@ export class Game {
             this.scene,
             new THREE.Vector3(1.90, 1.5, -1),  // Player score on right wall
             new THREE.Euler(0, -Math.PI / 2, 0),
-            'PONG MASTER'
+            'YOU'
         );
         
         this.aiScoreDisplay = new ScoreDisplay(
             this.scene,
             new THREE.Vector3(-1.90, 1.5, -1),  // AI score on left wall
             new THREE.Euler(0, Math.PI / 2, 0),
-            'YOU'
+            'AI'
         );
         
         // Add timer displays above both score displays
@@ -718,8 +718,9 @@ export class Game {
             this.playerScoreDisplay.updateLabel('YOU');
             this.aiScoreDisplay.updateLabel('OPPONENT');
         } else {
-            this.playerScoreDisplay.updateLabel('PONG MASTER');
-            this.aiScoreDisplay.updateScore(0);
+            // Single player mode - correct labels for player and AI
+            this.playerScoreDisplay.updateLabel('YOU');
+            this.aiScoreDisplay.updateLabel('AI');
         }
     }
 
@@ -1215,7 +1216,7 @@ export class Game {
                                     this.showMessage("Failed to restart the game!", 3000);
                                     
                                     // Show the UI elements again 
-                                    this.finalScoreDisplay.show(this.playerScore, this.aiScore);
+                                    this.finalScoreDisplay.show(this.playerScore, this.aiScore, this.isMultiplayer);
                                     this.restartButton.show();
                                 }
                             } else {
@@ -1272,7 +1273,7 @@ export class Game {
                             // Emit wall hit event for haptic feedback on mobile
                             this.emit('wallHit', { position: 'wall' });
                         } else if (collision === 'player_score') {
-                            // AI scored
+                            // AI scored - correctly increment AI score
                             this.aiScore++;
                             this.aiScoreDisplay.updateScore(this.aiScore);
                             if (this.soundManager) {
@@ -1303,7 +1304,7 @@ export class Game {
                                 }
                             }, 1000);
                         } else if (collision === 'ai_score') {
-                            // Player scored
+                            // Player scored - correctly increment player score
                             this.playerScore++;
                             this.playerScoreDisplay.updateScore(this.playerScore);
                             if (this.soundManager) {
@@ -1652,8 +1653,8 @@ export class Game {
             console.log("Ball velocity reset:", this.ball.ballVelocity);
         }
         
-        // Show the final score display for all players
-        this.finalScoreDisplay.show(this.playerScore, this.aiScore);
+        // Show the final score display for all players - pass the isMultiplayer flag
+        this.finalScoreDisplay.show(this.playerScore, this.aiScore, this.isMultiplayer);
         
         // Only show the restart button to the host in multiplayer mode
         if (!this.isMultiplayer || (this.isMultiplayer && this.multiplayerManager && this.multiplayerManager.isHost)) {
@@ -1665,7 +1666,7 @@ export class Game {
         
         // Play a sound if available
         if (this.soundManager) {
-            this.soundManager.playScore(); // Using an existing sound for game over
+            this.soundManager.playLose();
         }
         
         // Trigger haptic feedback for game over
