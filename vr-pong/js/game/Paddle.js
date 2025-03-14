@@ -8,6 +8,7 @@ export class Paddle {
         this.height = 0.1;     // Keep height the same for visibility
         this.depth = 0.02;     // Make it much thinner (was 0.1)
         this.targetPosition = new THREE.Vector3();
+        this.lastBallPosition = null; // For ball velocity calculation in AI paddle
         this.smoothSpeed = 0.45; // Increased from 0.35 for even faster AI movement
         this.lastPredictedX = 0;
         this.lastUpdateTime = 0;
@@ -198,92 +199,101 @@ export class Paddle {
         }
     }
 
-    updateAI(ball, difficulty = 0.25) { // Increased base difficulty (was 0.15)
-        if (!this.isAI) return;
+    /**
+     * Keep the paddle within the playable area bounds
+     */
+    constrainToBounds() {
+        // Limit paddle movement within the playable area
+        const maxX = 0.6; // Maximum X position (left/right)
+        const maxY = 1.2; // Maximum Y position (up)
+        const minY = 0.6; // Minimum Y position (down)
+        
+        // Apply constraints
+        this.paddle.position.x = THREE.MathUtils.clamp(this.paddle.position.x, -maxX, maxX);
+        this.paddle.position.y = THREE.MathUtils.clamp(this.paddle.position.y, minY, maxY);
+    }
+    
+    /**
+     * Cubic easing function for smooth movement
+     * @param {number} t - Value between 0 and 1
+     * @returns {number} Eased value between 0 and 1
+     */
+    cubicEaseInOut(t) {
+        return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    }
 
-        const currentTime = performance.now();
+    /**
+     * Update AI paddle to follow the ball
+     * @param {THREE.Object3D} ball - The ball to track
+     * @param {number} difficulty - The difficulty level (between 0 and 1, default 0.25)
+     */
+    updateAI(ball, difficulty = 0.25) {
+        if (!ball) return;
         
-        // Check if we should apply a random slowdown
-        this.checkRandomSlowdown(currentTime);
+        // Get ball position
+        const ballPosition = ball.position.clone();
         
-        // Get ball position and velocity for prediction
-        const ballPosition = ball.position;
-        let ballVelocity = new THREE.Vector3(0, 0, 0);
-        
-        // Try to get ball velocity if available
-        if (ball.ballVelocity) {
-            ballVelocity = ball.ballVelocity;
-        } else if (ball.getBallVelocity && typeof ball.getBallVelocity === 'function') {
-            ballVelocity = ball.getBallVelocity();
-        }
-        
-        // Predict where the ball will be - more advanced prediction
-        let targetX = ballPosition.x;
-        
-        // If the ball is moving toward the AI paddle, predict where it will intersect
-        if (ballVelocity && ballVelocity.z < 0) {
-            // Calculate time to reach paddle plane based on current Z position and velocity
-            const distanceToAI = Math.abs(ballPosition.z - (-1.9));
-            const timeToReach = Math.abs(distanceToAI / ballVelocity.z);
+        // Predict where the ball will be when it reaches the AI paddle's Z position
+        // First, check if the ball is moving toward the AI paddle
+        if (this.lastBallPosition && ballPosition.z < this.lastBallPosition.z) {
+            // Calculate ball velocity
+            const ballVelocity = new THREE.Vector3().subVectors(ballPosition, this.lastBallPosition);
             
-            // Predict X position on arrival
-            let predictedX = ballPosition.x + (ballVelocity.x * timeToReach * this.predictionAheadFactor);
+            // Calculate time until the ball reaches the paddle's Z position
+            const distanceZ = Math.abs(ballPosition.z - this.paddle.position.z);
+            const timeToReach = distanceZ / Math.abs(ballVelocity.z);
             
-            // Apply some limits to the prediction to prevent over-committing
-            predictedX = THREE.MathUtils.clamp(predictedX, -0.5, 0.5);
+            // Predict future position
+            const predictedX = ballPosition.x + ballVelocity.x * timeToReach;
+            const predictedY = ballPosition.y + ballVelocity.y * timeToReach;
             
-            // Use predicted position
-            targetX = predictedX;
+            // Add some error to the prediction based on difficulty (easier = more error)
+            // Invert the difficulty factor for prediction error (higher difficulty = less error)
+            const predictionError = (1 - difficulty) * 0.3;
+            const randomError = (Math.random() * 2 - 1) * predictionError;
+            
+            // Target position with error
+            this.targetPosition.x = predictedX + randomError;
+            this.targetPosition.y = predictedY + randomError;
+        } else {
+            // Ball is moving away, so track its current X,Y
+            this.targetPosition.x = ballPosition.x;
+            this.targetPosition.y = ballPosition.y;
         }
-
-        // Update prediction less frequently to allow AI to commit to movements
-        if (currentTime - this.lastUpdateTime > this.updateInterval) {
-            // Calculate base target position with prediction
-            let newTargetX = targetX;
-
-            // Add very small random offset for natural movement (reduced further)
-            const randomOffset = (Math.random() - 0.5) * 0.005; // Reduced randomness for more precision
-            newTargetX += randomOffset;
-
-            // Smooth transition to new target
-            this.lastPredictedX = this.lerp(
-                this.lastPredictedX,
-                newTargetX,
-                0.7 // Faster target updating (was 0.5)
-            );
-
-            this.lastUpdateTime = currentTime;
-        }
-
-        // Calculate smooth movement
-        const currentX = this.paddle.position.x;
-        const diff = this.lastPredictedX - currentX;
         
-        // Use cubic easing for more aggressive acceleration/deceleration
-        const direction = Math.sign(diff);
-        const distance = Math.abs(diff);
-        let speed = Math.min(distance * distance * 5, difficulty); // Increased acceleration factor (was 4)
+        // Apply speed adjustments based on difficulty
+        const baseSpeed = difficulty; // This is now a parameter
         
-        // Apply slowdown if active
-        if (this.isSlowedDown) {
-            speed *= this.slowdownFactor;
+        // Calculate direction to target
+        const directionX = this.targetPosition.x - this.paddle.position.x;
+        const directionY = this.targetPosition.y - this.paddle.position.y;
+        
+        // Apply cubic easing for more natural acceleration and slowdown
+        const distanceToTarget = Math.sqrt(directionX * directionX + directionY * directionY);
+        const easing = this.cubicEaseInOut(Math.min(1, distanceToTarget));
+        
+        let speedX = directionX * baseSpeed * easing;
+        let speedY = directionY * baseSpeed * easing;
+        
+        // Apply random slowdown chance based on difficulty
+        if (Math.random() < this.slowdownChance * (1 - difficulty)) {
+            speedX *= this.slowdownFactor;
+            speedY *= this.slowdownFactor;
         }
-
-        // Move towards target with higher precision for difficult AI
-        if (Math.abs(diff) > 0.0005) { // Reduced threshold for higher precision
-            const movement = direction * speed;
-            const newX = this.lerp(
-                currentX,
-                currentX + movement,
-                this.isSlowedDown ? this.smoothSpeed * this.slowdownFactor : this.smoothSpeed
-            );
-
-            // Apply position with constraints
-            this.paddle.position.x = THREE.MathUtils.clamp(
-                newX,
-                -0.6,
-                0.6
-            );
+        
+        // Move paddle toward target
+        if (Math.abs(directionX) > 0.001) {
+            this.paddle.position.x += speedX;
         }
+        
+        if (Math.abs(directionY) > 0.001) {
+            this.paddle.position.y += speedY;
+        }
+        
+        // Store current ball position for next update
+        this.lastBallPosition = ballPosition.clone();
+        
+        // Keep paddle within bounds
+        this.constrainToBounds();
     }
 }

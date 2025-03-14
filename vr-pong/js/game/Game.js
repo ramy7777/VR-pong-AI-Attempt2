@@ -11,6 +11,7 @@ import { ScoreDisplay } from '../ui/ScoreDisplay.js';
 import { Timer } from '../ui/Timer.js';
 import { TimerDisplay } from '../ui/TimerDisplay.js';
 import { MultiplayerMenu } from '../ui/MultiplayerMenu.js';
+import { DifficultyMenu } from '../ui/DifficultyMenu.js';
 import { MultiplayerManager } from '../network/MultiplayerManager.js';
 import { RestartButton } from '../ui/RestartButton.js';
 import { FinalScoreDisplay } from '../ui/FinalScoreDisplay.js';
@@ -43,6 +44,14 @@ export class Game {
         this.isMultiplayer = false;
         this.isLocalPlayer = true; // By default, we're the local player
         this.playerId = Math.random().toString(36).substring(2, 15); // Generate a random ID
+        
+        // AI difficulty settings
+        this.aiDifficulty = {
+            easy: 0.10,     // Low difficulty - slower AI paddle
+            medium: 0.18,   // Medium difficulty
+            expert: 0.25    // Expert difficulty (current default)
+        };
+        this.currentAiDifficulty = this.aiDifficulty.expert; // Default to expert
         
         // Desktop controls
         this.desktopControls = {
@@ -82,6 +91,7 @@ export class Game {
         this.timer = null;
         this.timerDisplay = null;
         this.multiplayerMenu = null;
+        this.difficultyMenu = null;
         this.restartButton = null;
         this.finalScoreDisplay = null;
         
@@ -190,44 +200,14 @@ export class Game {
 
     setupMultiplayerCallbacks() {
         this.multiplayerMenu = new MultiplayerMenu(this.scene);
+        this.setupDifficultyMenu();
         
         // Set up the callbacks for the multiplayer menu buttons
         this.multiplayerMenu.setCallbacks({
             onSinglePlayer: () => {
-                console.log("Starting single player game...");
+                console.log("Showing difficulty selection menu...");
                 this.multiplayerMenu.hide();
-                
-                // Reset existing game state
-                this.resetGame();
-                
-                // Start a single player game against AI
-                this.isMultiplayer = false;
-                this.isGameStarted = true;
-                
-                // Reset scores
-                this.playerScore = 0;
-                this.aiScore = 0;
-                this.playerScoreDisplay.updateScore(0);
-                this.aiScoreDisplay.updateScore(0);
-                
-                // Make sure the AI paddle is positioned correctly
-                this.aiPaddle.getPaddle().position.z = -1.9;
-                this.playerPaddle.getPaddle().position.z = -0.1;
-                
-                // Hide the start button
-                this.startButton.hide();
-                
-                // Start game directly
-                this.ball.start();
-                this.timer.start();
-                if (this.soundManager) {
-                    this.soundManager.startBackgroundMusic();
-                }
-                
-                this.showMessage('Single Player Game Started!');
-                
-                // Set paddle colors in single player mode
-                this.setSinglePlayerPaddleColors();
+                this.difficultyMenu.show();
             },
             onHost: () => {
                 if (this.multiplayerManager.isConnected) {
@@ -262,6 +242,90 @@ export class Game {
                 this.startButton.show();
             }
         });
+    }
+
+    setupDifficultyMenu() {
+        // Create the difficulty menu after ensuring Three.js components are initialized
+        if (!this.scene) {
+            console.error("Cannot create difficulty menu: Scene not initialized");
+            return;
+        }
+        
+        try {
+            this.difficultyMenu = new DifficultyMenu(this.scene);
+            
+            // Set up callbacks for difficulty buttons
+            this.difficultyMenu.setCallbacks({
+                onEasy: () => {
+                    console.log("Starting single player game on Easy difficulty...");
+                    this.difficultyMenu.hide();
+                    
+                    // Set AI difficulty to easy
+                    this.currentAiDifficulty = this.aiDifficulty.easy;
+                    this.startSinglePlayerGame("Easy");
+                },
+                onMedium: () => {
+                    console.log("Starting single player game on Medium difficulty...");
+                    this.difficultyMenu.hide();
+                    
+                    // Set AI difficulty to medium
+                    this.currentAiDifficulty = this.aiDifficulty.medium;
+                    this.startSinglePlayerGame("Medium");
+                },
+                onExpert: () => {
+                    console.log("Starting single player game on Expert difficulty...");
+                    this.difficultyMenu.hide();
+                    
+                    // Set AI difficulty to expert (default)
+                    this.currentAiDifficulty = this.aiDifficulty.expert;
+                    this.startSinglePlayerGame("Expert");
+                },
+                onBack: () => {
+                    // Return to multiplayer menu
+                    console.log("Returning to mode selection");
+                    this.difficultyMenu.hide();
+                    this.multiplayerMenu.show();
+                }
+            });
+            
+            console.log("Difficulty menu initialized successfully");
+        } catch (error) {
+            console.error("Error initializing difficulty menu:", error);
+        }
+    }
+    
+    startSinglePlayerGame(difficulty) {
+        // Reset existing game state
+        this.resetGame();
+        
+        // Start a single player game against AI
+        this.isMultiplayer = false;
+        this.isGameStarted = true;
+        
+        // Reset scores
+        this.playerScore = 0;
+        this.aiScore = 0;
+        this.playerScoreDisplay.updateScore(0);
+        this.aiScoreDisplay.updateScore(0);
+        
+        // Make sure the AI paddle is positioned correctly
+        this.aiPaddle.getPaddle().position.z = -1.9;
+        this.playerPaddle.getPaddle().position.z = -0.1;
+        
+        // Hide the start button
+        this.startButton.hide();
+        
+        // Start game directly
+        this.ball.start();
+        this.timer.start();
+        if (this.soundManager) {
+            this.soundManager.startBackgroundMusic();
+        }
+        
+        this.showMessage(`Single Player Game Started! (${difficulty} Mode)`);
+        
+        // Set paddle colors in single player mode
+        this.setSinglePlayerPaddleColors();
     }
 
     setupDesktopControls() {
@@ -397,6 +461,25 @@ export class Game {
                     this.restartButton.unhighlight();
                 }
             }
+            
+            // Handle mouse hover for difficulty menu buttons in desktop mode
+            if (!this.isInVR && this.difficultyMenu && this.difficultyMenu.isVisible) {
+                // Get the current mouse coordinates
+                const mouseX = this.desktopControls.mouseX;
+                const mouseY = this.desktopControls.mouseY;
+                
+                // Create a raycaster and check for intersections
+                const hoverIntersect = this.difficultyMenu.checkMouseIntersection(mouseX, mouseY, this.camera);
+                
+                if (hoverIntersect) {
+                    this.difficultyMenu.highlightButton(hoverIntersect.button);
+                } else {
+                    // Unhighlight current button if mouse is no longer over any button
+                    ['easy', 'medium', 'expert', 'back'].forEach(buttonKey => {
+                        this.difficultyMenu.unhighlightButton(buttonKey);
+                    });
+                }
+            }
         });
 
         // Prevent context menu on right-click
@@ -519,6 +602,24 @@ export class Game {
                         this.multiplayerMenu.pressButton('join');
                     } else if (backIntersects.length > 0) {
                         this.multiplayerMenu.pressButton('back');
+                    }
+                }
+                
+                // Check difficulty menu button intersections
+                if (this.difficultyMenu && this.difficultyMenu.isVisible) {
+                    const easyIntersects = raycaster.intersectObject(this.difficultyMenu.buttons.easy, true);
+                    const mediumIntersects = raycaster.intersectObject(this.difficultyMenu.buttons.medium, true);
+                    const expertIntersects = raycaster.intersectObject(this.difficultyMenu.buttons.expert, true);
+                    const backIntersects = raycaster.intersectObject(this.difficultyMenu.buttons.back, true);
+                    
+                    if (easyIntersects.length > 0) {
+                        this.difficultyMenu.pressButton('easy');
+                    } else if (mediumIntersects.length > 0) {
+                        this.difficultyMenu.pressButton('medium');
+                    } else if (expertIntersects.length > 0) {
+                        this.difficultyMenu.pressButton('expert');
+                    } else if (backIntersects.length > 0) {
+                        this.difficultyMenu.pressButton('back');
                     }
                 }
             }
@@ -1099,6 +1200,37 @@ export class Game {
                 }
             }
 
+            // Handle difficulty menu interactions when it's visible
+            if (this.difficultyMenu && this.difficultyMenu.isVisible && this.isInVR) {
+                const leftIntersects = this.difficultyMenu.checkIntersection(this.vrController.controllers[0]);
+                const rightIntersects = this.difficultyMenu.checkIntersection(this.vrController.controllers[1]);
+                
+                // Unhighlight all buttons first
+                ['easy', 'medium', 'expert', 'back'].forEach(buttonKey => {
+                    this.difficultyMenu.unhighlightButton(buttonKey);
+                });
+                
+                if (leftIntersects) {
+                    this.difficultyMenu.highlightButton(leftIntersects.button);
+                    // Only process button press on the initial press event, not while holding
+                    if (this.vrController.controllers[0].userData.isSelecting && 
+                        this.vrController.controllers[0].userData.isNewPress) {
+                        console.log(`VR difficulty menu button press: ${leftIntersects.button}`);
+                        this.difficultyMenu.pressButton(leftIntersects.button);
+                    }
+                }
+                
+                if (rightIntersects) {
+                    this.difficultyMenu.highlightButton(rightIntersects.button);
+                    // Only process button press on the initial press event, not while holding
+                    if (this.vrController.controllers[1].userData.isSelecting && 
+                        this.vrController.controllers[1].userData.isNewPress) {
+                        console.log(`VR difficulty menu button press: ${rightIntersects.button}`);
+                        this.difficultyMenu.pressButton(rightIntersects.button);
+                    }
+                }
+            }
+
             // Get previous ball position for physics/sound calculations
             const prevBallZ = this.ball ? this.ball.getBall().position.z : 0;
             const prevBallX = this.ball ? this.ball.getBall().position.x : 0;
@@ -1417,7 +1549,7 @@ export class Game {
                     
                     // Update AI paddle for single player mode
                     if (!this.isMultiplayer && this.aiPaddle && this.ball) {
-                        this.aiPaddle.updateAI(this.ball.getBall());
+                        this.aiPaddle.updateAI(this.ball.getBall(), this.currentAiDifficulty);
                     }
                     
                     // In multiplayer mode, send paddle position to the other player
