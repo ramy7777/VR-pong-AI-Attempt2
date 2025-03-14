@@ -63,6 +63,12 @@ class OpenAIVoiceAssistant {
         this.aiSlowdownStartTime = 0;
         this.aiSlowdownDuration = 0;
         
+        // Game timer tracking
+        this.gameTimerValue = 150; // Default 2.5 minutes (150 seconds)
+        this.gameTimerRunning = false;
+        this.gameTimerLastWarningAt = 0;
+        this.timerWarningThresholds = [60, 30, 20, 10]; // Seconds left thresholds for warnings
+        
         // Message handling
         this.messageQueue = [];
         this.processingQueue = false;
@@ -113,7 +119,7 @@ class OpenAIVoiceAssistant {
         }
         
         // Add event listeners for game events
-        document.addEventListener('game-started', () => {
+        document.addEventListener('game-started', (event) => {
             console.log('Game started, OpenAI voice assistant is ' + (this.connected ? 'active' : 'inactive'));
             this.gameInProgress = true;
             this.playerScore = 0;
@@ -125,6 +131,30 @@ class OpenAIVoiceAssistant {
             this.currentGameTime = 0;
             this.matchTimeElapsed = 0;
             
+            // Initialize timer state properly
+            this.gameTimerValue = 150; // Default 2.5 minutes (150 seconds)
+            
+            // Track game timer with improved initialization
+            if (event.detail) {
+                // Use timer values from the event if available
+                if (event.detail.timerDuration !== undefined) {
+                    this.gameTimerValue = event.detail.timerDuration;
+                    console.log(`Game timer initialized from timerDuration: ${this.gameTimerValue} seconds`);
+                } else if (event.detail.timeLeft !== undefined) {
+                    // Update with current time left if provided
+                    this.gameTimerValue = event.detail.timeLeft;
+                    console.log(`Game timer initialized from timeLeft: ${this.gameTimerValue} seconds`);
+                } else {
+                    console.log(`Game timer initialized with default: ${this.gameTimerValue} seconds`);
+                }
+            } else {
+                console.log(`Game timer initialized with default: ${this.gameTimerValue} seconds (no event details)`);
+            }
+            
+            // Mark timer as running and reset warnings
+            this.gameTimerRunning = true;
+            this.gameTimerLastWarningAt = this.gameTimerValue + 1; // Start above all thresholds
+            
             // If connected, send a game start notification
             if (this.connected) {
                 this.sendGameStateUpdate('game_started');
@@ -134,9 +164,10 @@ class OpenAIVoiceAssistant {
             }
         });
         
-        document.addEventListener('game-ended', () => {
+        document.addEventListener('game-ended', (event) => {
             console.log('Game ended');
             this.gameInProgress = false;
+            this.gameTimerRunning = false;
             
             // Calculate final match time
             if (this.gameStartTime > 0) {
@@ -166,6 +197,7 @@ class OpenAIVoiceAssistant {
                     // Calculate rally duration
                     if (this.rallyStartTime > 0) {
                         this.lastRallyDuration = Math.floor((Date.now() - this.rallyStartTime) / 1000);
+                        console.log(`Rally lasted ${this.lastRallyDuration} seconds`);
                     }
                     
                     // Start a new rally timer
@@ -228,6 +260,44 @@ class OpenAIVoiceAssistant {
             }
         });
         
+        // Listen for timer updates
+        document.addEventListener('timer-update', (event) => {
+            try {
+                if (event.detail && event.detail.timeLeft !== undefined) {
+                    const timeLeft = event.detail.timeLeft;
+                    const isRunning = event.detail.isRunning !== undefined ? event.detail.isRunning : true;
+                    const totalDuration = event.detail.totalDuration || 150;
+                    const isFinished = event.detail.isFinished || false;
+                    
+                    // Store the current timer value
+                    this.gameTimerValue = timeLeft;
+                    
+                    // Update timer running state based on explicit information from the game
+                    this.gameTimerRunning = isRunning && !isFinished;
+                    
+                    // Ensure we don't trigger warnings if timer isn't actually running
+                    if (!this.gameTimerRunning) {
+                        return;
+                    }
+                    
+                    // Log timer updates occasionally (once every 5 seconds)
+                    if (Math.floor(timeLeft) % 5 === 0) {
+                        const minutes = Math.floor(timeLeft / 60);
+                        const seconds = Math.floor(timeLeft % 60);
+                        console.log(`Timer update: ${minutes}:${seconds.toString().padStart(2, '0')} remaining, running=${isRunning}, finished=${isFinished}`);
+                    }
+                    
+                    // Only process warnings if the timer is actually running and the game is in progress
+                    if (this.gameInProgress && isRunning && !isFinished) {
+                        // Check if we should announce time remaining
+                        this.checkTimerWarnings(timeLeft);
+                    }
+                }
+            } catch (error) {
+                console.error('Error handling timer update:', error);
+            }
+        });
+        
         // Listen for AI slowdown events
         document.addEventListener('ai-slowdown-started', (event) => {
             try {
@@ -270,6 +340,66 @@ class OpenAIVoiceAssistant {
                 }
             }
         }, 1000);
+    }
+    
+    // New method to check and trigger timer warnings
+    checkTimerWarnings(timeLeft) {
+        if (!this.connected || !this.gameInProgress) return;
+        
+        // Calculate minutes and seconds for display
+        const minutes = Math.floor(timeLeft / 60);
+        const seconds = Math.floor(timeLeft % 60);
+        
+        // Check standard thresholds
+        for (const threshold of this.timerWarningThresholds) {
+            // Check if we've crossed a threshold (going from above to below or equal)
+            if (timeLeft <= threshold && 
+                (this.gameTimerLastWarningAt === 0 || 
+                 this.gameTimerLastWarningAt > threshold)) {
+                
+                console.log(`Timer warning threshold crossed: ${minutes}:${seconds.toString().padStart(2, '0')} remaining`);
+                
+                if (this.connected) {
+                    this.sendGameStateUpdate('timer_warning', { timeLeft, minutes, seconds });
+                }
+                this.gameTimerLastWarningAt = timeLeft;
+                break;
+            }
+        }
+        
+        // Special handling for final 10 seconds - announce each second
+        if (timeLeft <= 10 && Math.floor(this.gameTimerLastWarningAt) !== Math.floor(timeLeft)) {
+            console.log(`Timer countdown: ${Math.ceil(timeLeft)} seconds left!`);
+            
+            if (this.connected) {
+                // For each second in the final 10, do a countdown announcement
+                let countdownMessage = '';
+                
+                if (Math.ceil(timeLeft) === 10) {
+                    countdownMessage = "Final 10 seconds countdown starting!";
+                } else if (Math.ceil(timeLeft) === 5) {
+                    countdownMessage = "Just 5 seconds left!";
+                } else if (Math.ceil(timeLeft) === 3) {
+                    countdownMessage = "3...";
+                } else if (Math.ceil(timeLeft) === 2) {
+                    countdownMessage = "2...";
+                } else if (Math.ceil(timeLeft) === 1) {
+                    countdownMessage = "1...";
+                } else if (Math.floor(timeLeft) < 0.5) {
+                    countdownMessage = "Time's up!";
+                } else {
+                    countdownMessage = `${Math.ceil(timeLeft)}...`;
+                }
+                
+                this.sendGameStateUpdate('timer_countdown', { 
+                    timeLeft, 
+                    minutes, 
+                    seconds,
+                    message: countdownMessage 
+                });
+            }
+            this.gameTimerLastWarningAt = timeLeft;
+        }
     }
     
     createRemoteAudioElement() {
@@ -1467,7 +1597,7 @@ class OpenAIVoiceAssistant {
     }
     
     // Send game state updates to OpenAI
-    sendGameStateUpdate(eventType) {
+    sendGameStateUpdate(eventType, extraData = {}) {
         if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
             console.log(`Cannot send ${eventType} update: data channel not open`);
             return;
@@ -1479,7 +1609,8 @@ class OpenAIVoiceAssistant {
             // Construct appropriate message based on event type
             switch (eventType) {
                 case 'game_started':
-                    updateMessage = 'Game has started! The player is facing off against the AI in a virtual reality Pong match.';
+                    const timerInfo = this.gameTimerValue ? ` Game time set to ${Math.floor(this.gameTimerValue / 60)}:${(this.gameTimerValue % 60).toString().padStart(2, '0')}.` : '';
+                    updateMessage = `Game has started! The player is facing off against the AI in a virtual reality Pong match.${timerInfo}`;
                     break;
                     
                 case 'game_ended':
@@ -1529,6 +1660,24 @@ class OpenAIVoiceAssistant {
                     
                 case 'ai_speed_restored':
                     updateMessage = "The AI paddle has returned to normal speed.";
+                    break;
+                
+                case 'timer_warning':
+                    const { minutes, seconds } = extraData;
+                    if (minutes > 0) {
+                        updateMessage = `${minutes} minute${minutes > 1 ? 's' : ''} remaining in the game.`;
+                    } else {
+                        updateMessage = `Only ${seconds} seconds remaining in the game!`;
+                    }
+                    break;
+                    
+                case 'timer_countdown':
+                    // Use custom message if provided, otherwise use the default format
+                    if (extraData.message) {
+                        updateMessage = extraData.message;
+                    } else {
+                        updateMessage = `${Math.ceil(extraData.timeLeft)} seconds left!`;
+                    }
                     break;
                     
                 default:
@@ -1603,6 +1752,15 @@ class OpenAIVoiceAssistant {
         const rallyInfo = this.gameInProgress ? `Current rally duration: ${this.currentRallyDuration} seconds` : 'No active rally';
         const aiSlowdownInfo = this.aiSlowdownActive ? 'AI paddle is currently slowed down' : 'AI paddle is at normal speed';
         
+        // Format timer display with improved detection
+        let timerInfo = 'Timer not active';
+        if (this.gameInProgress && this.gameTimerRunning && this.gameTimerValue > 0) {
+            const minutes = Math.floor(this.gameTimerValue / 60);
+            const seconds = Math.floor(this.gameTimerValue % 60);
+            const timerDisplay = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+            timerInfo = `Game time remaining: ${timerDisplay}`;
+        }
+        
         const instructions = `
 You are an enthusiastic AI voice assistant integrated into a Virtual Reality Pong game. Your role is to provide real-time commentary, tips, and make the game more engaging.
 
@@ -1610,6 +1768,7 @@ Current Game State:
 - Game Active: ${this.gameInProgress ? 'Yes' : 'No'}
 - Current Score: ${currentScore} 
 - Status: ${gameStatus}
+- ${timerInfo}
 - ${gameTimeInfo}
 - ${rallyInfo}
 - ${aiSlowdownInfo}
@@ -1621,7 +1780,8 @@ Your capabilities in this VR Pong game:
 2. Offer strategic tips when appropriate
 3. Comment on the AI's occasional slowdowns when they happen
 4. Make remarks about long rallies and their duration
-5. Add humor and personality to make the game more fun
+5. Announce important time remaining milestones (1 minute left, 30 seconds, etc.)
+6. Add humor and personality to make the game more fun
 
 Do not mention anything about being an AI language model, focus only on your role as a game commentator.
 `;
@@ -1716,20 +1876,20 @@ Do not mention anything about being an AI language model, focus only on your rol
         
         // Send gameplay tips every 30-60 seconds, with variation based on game state
         this.tipsTimer = setInterval(() => {
-            if (!this.isConnected || !this.gameState.gameInProgress) {
+            if (!this.isConnected || !this.gameInProgress) {
                 this.stopGameplayTipsTimer();
                 return;
             }
             
             // Only send tips if the game has been going for a while
-            const gameTime = Date.now() - this.gameState.gameStartTime;
+            const gameTime = Date.now() - this.gameStartTime;
             if (gameTime < 15000) { // Don't send tips in the first 15 seconds
                 return;
             }
             
             // Check if we should send a tip based on game state
-            const playerScore = this.gameState.playerScore;
-            const aiScore = this.gameState.aiScore;
+            const playerScore = this.playerScore;
+            const aiScore = this.aiScore;
             const scoreDifference = Math.abs(playerScore - aiScore);
             const playerLeading = playerScore > aiScore;
             const aiLeading = aiScore > playerScore;
@@ -1747,7 +1907,63 @@ Do not mention anything about being an AI language model, focus only on your rol
                 this.sendGameplayTip();
             }
             
+            // Also announce the current time remaining occasionally
+            if (this.gameTimerRunning && this.gameTimerValue > 0 && Math.random() < 0.4) {
+                this.announceTimeRemaining();
+            }
+            
         }, 30000); // Check every 30 seconds
+    }
+    
+    // New method to announce time remaining
+    announceTimeRemaining() {
+        if (!this.connected || !this.gameInProgress || !this.gameTimerRunning) return;
+        
+        const timeLeft = this.gameTimerValue;
+        const minutes = Math.floor(timeLeft / 60);
+        const seconds = Math.floor(timeLeft % 60);
+        
+        let timeMessage = '';
+        
+        // Format the time message based on how much time is left
+        if (minutes > 0) {
+            timeMessage = `${minutes} minute${minutes > 1 ? 's' : ''} and ${seconds} seconds remaining.`;
+        } else if (seconds > 30) {
+            timeMessage = `${seconds} seconds remaining.`;
+        } else if (seconds > 10) {
+            timeMessage = `Only ${seconds} seconds left!`;
+        } else {
+            timeMessage = `Final countdown! ${seconds} seconds!`;
+        }
+        
+        if (this.connected) {
+            // Send as a system message
+            const payload = JSON.stringify({
+                type: 'conversation.item.create',
+                item: {
+                    type: 'message',
+                    role: 'system',
+                    content: [{
+                        type: 'input_text',
+                        text: timeMessage
+                    }]
+                }
+            });
+            
+            // Send the message
+            this.sendDataChannelMessage(payload);
+            console.log(`Time announcement sent: ${timeMessage}`);
+            
+            // Request a response
+            setTimeout(() => {
+                if (this.connected) {
+                    const responsePayload = JSON.stringify({
+                        type: 'response.create'
+                    });
+                    this.sendDataChannelMessage(responsePayload);
+                }
+            }, 500);
+        }
     }
     
     stopGameplayTipsTimer() {
@@ -1762,8 +1978,8 @@ Do not mention anything about being an AI language model, focus only on your rol
             return;
         }
         
-        const playerScore = this.gameState.playerScore;
-        const aiScore = this.gameState.aiScore;
+        const playerScore = this.playerScore;
+        const aiScore = this.aiScore;
         const playerLeading = playerScore > aiScore;
         const aiLeading = aiScore > playerScore;
         
