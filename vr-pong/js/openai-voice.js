@@ -1594,26 +1594,25 @@ class OpenAIVoiceAssistant {
         return role === 'assistant' ? 'text' : 'input_text';
     }
     
-    // Send initial greeting message using the correct format
+    // Send initial greeting to start the conversation
     async sendGreeting() {
-        console.log('Sending initial greeting...');
-        
-        // Define simple greeting message without game-specific content
-        const greetingMessage = "Hello! I'm an AI assistant for this VR Pong game. Game updates are currently disabled for testing. How can I help you?";
-        
         try {
-            // Wait to ensure connection is stable
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            console.log('Sending initial greeting...');
             
-            // Check connection
-            if (!this.isConnected || !this.dataChannel || this.dataChannel.readyState !== 'open') {
-                console.log('Not connected or data channel not ready, cannot send greeting');
+            // Check if connection is ready
+            if (!this.connected || !this.dataChannel || this.dataChannel.readyState !== 'open') {
+                console.log('Cannot send greeting: not fully connected');
                 return;
             }
             
+            // Start with a simple greeting
+            const greeting = "Hello! I'm your Pong game assistant. I'll announce scores and game events. Let's play!";
+            
             // Update UI
-            this.updateStatus(`Assistant greeting: ${greetingMessage}`);
-            this.addMessage('assistant', greetingMessage);
+            this.updateStatus('Assistant greeting: ' + greeting);
+            
+            // Add the message to the UI
+            this.addMessage('assistant', greeting);
             
             // Format message according to OpenAI's WebRTC API requirements
             const payload = JSON.stringify({
@@ -1623,24 +1622,14 @@ class OpenAIVoiceAssistant {
                     role: 'assistant',
                     content: [{
                         type: 'text', // Assistant messages use 'text' type
-                        text: greetingMessage
+                        text: greeting
                     }]
                 }
             });
             
-            // Use the rate-limited message sender
-            await this.sendDataChannelMessage(payload);
+            // Send the message
+            this.sendDataChannelMessage(payload);
             console.log('Initial greeting sent successfully');
-            
-            // Request a response
-            const responsePayload = JSON.stringify({
-                type: 'response.create'
-            });
-            
-            // Wait a moment before requesting a response
-            setTimeout(() => {
-                this.sendDataChannelMessage(responsePayload);
-            }, 500);
             
         } catch (error) {
             console.error('Error sending greeting:', error);
@@ -1667,43 +1656,63 @@ class OpenAIVoiceAssistant {
             switch (eventType) {
                 case 'game_started':
                     updateMessage = 'Game started. Good luck!';
+                    console.log('Sending game started message to AI');
                     break;
                 case 'game_ended':
                     const result = this.playerScore > this.aiScore ? 'You won' : 
                                   this.playerScore < this.aiScore ? 'AI won' : 'Game ended in a tie';
                     updateMessage = `Game ended. ${result}. Final score: You ${this.playerScore} - AI ${this.aiScore}`;
+                    console.log('Sending game ended message to AI');
+                    break;
+                case 'time_announcement':
+                    // Timer awareness disabled - no time announcements will be sent
+                    console.log('Timer awareness disabled - skipping time announcement');
+                    return;
+                case 'timer_countdown':
+                    // Timer awareness disabled - no countdown messages will be sent
+                    console.log('Timer awareness disabled - skipping timer countdown');
+                    return;
+                case 'player_scored':
+                    updateMessage = `Player scored! The score is now: Player ${this.playerScore} - AI ${this.aiScore}`;
+                    console.log('Sending player scored message to AI');
+                    break;
+                case 'ai_scored':
+                    updateMessage = `AI scored! The score is now: Player ${this.playerScore} - AI ${this.aiScore}`;
+                    console.log('Sending AI scored message to AI');
                     break;
                 default:
                     // Skip all other event types to minimize messages
+                    console.log(`Skipping non-critical event type: ${eventType}`);
                     return;
             }
             
-            console.log(`Game state update: ${updateMessage}`);
-            
-            // Format message according to OpenAI's WebRTC API requirements
-            const payload = JSON.stringify({
-                type: 'conversation.item.create',
-                item: {
-                    type: 'message',
-                    role: 'system',
-                    content: [{
-                        type: 'input_text', // System messages must use 'input_text' type
-                        text: updateMessage
-                    }]
+            // If we have a message to send, send it
+            if (updateMessage) {
+                // Format for the system message for OpenAI
+                const payload = JSON.stringify({
+                    type: 'conversation.item.create',
+                    item: {
+                        type: 'message',
+                        role: 'system',
+                        content: [{
+                            type: 'input_text', // System messages must use 'input_text' type
+                            text: updateMessage
+                        }]
+                    }
+                });
+                
+                // Send the update
+                this.sendDataChannelMessage(payload);
+                
+                // Request a response for important events
+                if (['game_ended', 'player_scored', 'ai_scored', 'time_announcement', 'timer_countdown'].includes(eventType)) {
+                    setTimeout(() => {
+                        const responsePayload = JSON.stringify({
+                            type: 'response.create'
+                        });
+                        this.sendDataChannelMessage(responsePayload);
+                    }, 500);
                 }
-            });
-            
-            // Send the update
-            this.sendDataChannelMessage(payload);
-            
-            // Request a response only for game end events
-            if (eventType === 'game_ended') {
-                setTimeout(() => {
-                    const responsePayload = JSON.stringify({
-                        type: 'response.create'
-                    });
-                    this.sendDataChannelMessage(responsePayload);
-                }, 500);
             }
             
         } catch (error) {
@@ -1723,20 +1732,25 @@ class OpenAIVoiceAssistant {
         const instructions = `
 You are an AI voice assistant integrated into a Virtual Reality Pong game.
 
-IMPORTANT: You will receive minimal game state updates (only game start, game end, and key menu selections).
-You should respond naturally to these updates with brief, encouraging comments.
+IMPORTANT INSTRUCTIONS:
+1. Respond audibly to game events including score updates, game start, game end, and menu selections
+2. Keep responses brief (1-2 sentences) and enthusiastic
+3. React to scores and celebrate or encourage the player
+4. Always speak aloud - your responses should be heard by the player
+5. NEVER announce the end of the game or say "final score" unless you receive an explicit "Game ended" event
+6. When a player or AI scores, just announce the current score - do NOT call it a "final score"
+7. Do NOT say "thanks for playing" or ask if they want to "try again" or "adjust settings" unless the game has explicitly ended
 
-Your main tasks:
-1. Acknowledge when a game starts with brief encouragement
-2. Congratulate or console the player when a game ends based on the result
-3. Acknowledge when player selects difficulty levels or game modes
-4. Respond to any direct questions from the player
+When a player scores, celebrate and announce the new score.
+When the AI scores, announce the new score and encourage the player.
+ONLY when the game ends (via a "Game ended" event), announce the final result.
+When a player selects a game option like difficulty level, acknowledge their choice.
 
-Keep your responses concise and focused on the game.
+Please respond with short encouragement after every game event.
 `;
         
         try {
-            // Format system message
+            // Format message according to OpenAI's WebRTC API requirements
             const payload = JSON.stringify({
                 type: 'conversation.item.create',
                 item: {
@@ -1751,9 +1765,16 @@ Keep your responses concise and focused on the game.
             
             // Send the instructions
             this.sendDataChannelMessage(payload);
-            this.updateStatus('Session instructions updated - minimal game updates enabled');
-            console.log('Session instructions updated successfully');
             
+            // Update UI to show instructions were sent
+            this.updateStatus('Session instructions updated - timer updates disabled');
+            
+            // Add a delay before sending the greeting
+            setTimeout(() => {
+                this.sendGreeting();
+            }, 2000);
+            
+            console.log('Session instructions updated successfully');
         } catch (error) {
             console.error('Error updating session instructions:', error);
         }

@@ -229,43 +229,20 @@ export class GameAIUpdater {
                 const totalDuration = event.detail.totalDuration || 150;
                 const isFinished = event.detail.isFinished || false;
                 
-                // Store the current timer value
+                // Store the current timer value but don't announce it
                 this.gameTimerValue = timeLeft;
-                
-                // Update timer running state
                 this.gameTimerRunning = isRunning && !isFinished;
                 
-                // Ensure we don't trigger warnings if timer isn't actually running
-                if (!this.gameTimerRunning) {
-                    return;
-                }
-                
-                // Log timer updates only on significant changes to reduce spam
-                const previousMinutes = Math.floor((this.lastLoggedTimerValue || 0) / 60);
-                const previousSeconds = Math.floor((this.lastLoggedTimerValue || 0) % 60);
+                // Log timer updates only for debugging purposes
                 const currentMinutes = Math.floor(timeLeft / 60);
                 const currentSeconds = Math.floor(timeLeft % 60);
                 
-                // Only log when minutes change or seconds change by 15
-                const shouldLog = 
-                    previousMinutes !== currentMinutes || 
-                    Math.floor(previousSeconds / 15) !== Math.floor(currentSeconds / 15);
+                console.log(`GameAIUpdater: Timer update: ${currentMinutes}:${currentSeconds.toString().padStart(2, '0')} remaining (timer announcements disabled)`);
                 
-                if (shouldLog) {
-                    console.log(`GameAIUpdater: Timer update: ${currentMinutes}:${currentSeconds.toString().padStart(2, '0')} remaining`);
-                    this.lastLoggedTimerValue = timeLeft;
-                }
+                // Store last logged value for internal tracking only
+                this.lastLoggedTimerValue = timeLeft;
                 
-                // Only process warnings if the timer is running and game is in progress
-                if (this.gameInProgress && isRunning && !isFinished) {
-                    this.checkTimerWarnings(timeLeft);
-                    
-                    // Periodically announce time remaining only at exactly 120, 90, 60, 30 seconds
-                    const timePoints = [120, 90, 60, 30];
-                    if (timePoints.includes(Math.floor(timeLeft))) {
-                        this.announceTimeRemaining();
-                    }
-                }
+                // No timer announcements will be sent - timer awareness disabled
             }
         } catch (error) {
             console.error('GameAIUpdater: Error handling timer update:', error);
@@ -273,98 +250,21 @@ export class GameAIUpdater {
     }
     
     /**
-     * Check timer thresholds and trigger warnings
+     * Check timer thresholds and trigger warnings for final countdown
+     * This method is now empty as timer awareness is disabled
      */
     checkTimerWarnings(timeLeft) {
-        if (!this.gameInProgress) return;
-        
-        // Calculate minutes and seconds for display
-        const minutes = Math.floor(timeLeft / 60);
-        const seconds = Math.floor(timeLeft % 60);
-        
-        // Only check specific thresholds (60, 30, 10 seconds) to reduce messages
-        const reducedThresholds = [60, 30, 10];
-        
-        // Check each threshold only once
-        for (const threshold of reducedThresholds) {
-            // Check if we've crossed a threshold (going from above to below or equal)
-            // and ensure we haven't already sent a warning at this threshold
-            if (timeLeft <= threshold && 
-                Math.floor(this.lastWarningAt) > threshold) {
-                
-                console.log(`GameAIUpdater: Timer warning threshold crossed: ${minutes}:${seconds.toString().padStart(2, '0')} remaining`);
-                
-                // Don't send timer warnings too close together
-                const timeSinceLastWarning = this.lastWarningAt - timeLeft;
-                if (timeSinceLastWarning >= 10 || threshold === 10) { // At least 10 seconds between warnings
-                    this.sendUpdate('timer_warning', { timeLeft, minutes, seconds });
-                    this.lastWarningAt = timeLeft;
-                }
-                break;
-            }
-        }
-        
-        // Special handling for final 10 seconds - announce only 5, 3, and 1 second marks
-        const countdownMarks = [5, 3, 1];
-        if (timeLeft <= 10 && 
-            countdownMarks.includes(Math.ceil(timeLeft)) && 
-            Math.floor(this.lastWarningAt) !== Math.ceil(timeLeft)) {
-            
-            console.log(`GameAIUpdater: Timer countdown: ${Math.ceil(timeLeft)} seconds left!`);
-            
-            // Prepare countdown message
-            let countdownMessage = `${Math.ceil(timeLeft)} seconds left!`;
-            
-            if (Math.ceil(timeLeft) === 1) {
-                countdownMessage = "Final second!";
-            }
-            
-            this.sendUpdate('timer_countdown', { 
-                timeLeft, 
-                minutes, 
-                seconds,
-                message: countdownMessage 
-            });
-            
-            this.lastWarningAt = timeLeft;
-        }
+        // Timer announcements disabled - no countdown warnings will be sent
+        return;
     }
     
     /**
      * Announce current time remaining
+     * This method is now empty as timer awareness is disabled  
      */
     announceTimeRemaining() {
-        if (!this.gameInProgress || !this.gameTimerRunning) return;
-        
-        const timeLeft = this.gameTimerValue;
-        const minutes = Math.floor(timeLeft / 60);
-        const seconds = Math.floor(timeLeft % 60);
-        
-        // Only announce at specific intervals to avoid too many messages
-        let timeMessage = '';
-        
-        if (minutes === 2) {
-            timeMessage = "2 minutes remaining in the game.";
-        } else if (minutes === 1 && seconds === 30) {
-            timeMessage = "1 minute and 30 seconds remaining.";
-        } else if (minutes === 1 && seconds === 0) {
-            timeMessage = "1 minute remaining. Getting close!";
-        } else if (minutes === 0 && seconds === 30) {
-            timeMessage = "30 seconds left! Final push!";
-        } else {
-            // Don't announce for other times
-            return;
-        }
-        
-        // Include the current score in time announcements
-        timeMessage += ` The score is ${this.playerScore}-${this.aiScore}.`;
-        
-        this.sendUpdate('time_announcement', { 
-            timeLeft, 
-            minutes, 
-            seconds, 
-            message: timeMessage 
-        });
+        // Timer announcements disabled - no time remaining announcements will be sent
+        return;
     }
     
     /**
