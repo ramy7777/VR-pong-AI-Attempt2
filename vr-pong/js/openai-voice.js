@@ -1606,7 +1606,7 @@ class OpenAIVoiceAssistant {
             }
             
             // Start with a simple greeting
-            const greeting = "Hello! I'm your Pong game assistant. I'll announce scores and game events. Let's play!";
+            const greeting = "Hello! I'm your Pong game assistant. I'll announce scores briefly, guide you through menu options, and provide encouragement during gameplay. I'll only announce the game end when it's actually over. Let's play!";
             
             // Update UI
             this.updateStatus('Assistant greeting: ' + greeting);
@@ -1661,7 +1661,7 @@ class OpenAIVoiceAssistant {
                 case 'game_ended':
                     const result = this.playerScore > this.aiScore ? 'You won' : 
                                   this.playerScore < this.aiScore ? 'AI won' : 'Game ended in a tie';
-                    updateMessage = `Game ended. ${result}. Final score: You ${this.playerScore} - AI ${this.aiScore}`;
+                    updateMessage = `Game ended. ${result}. Final score: Player ${this.playerScore} - AI ${this.aiScore}`;
                     console.log('Sending game ended message to AI');
                     break;
                 case 'time_announcement':
@@ -1673,11 +1673,11 @@ class OpenAIVoiceAssistant {
                     console.log('Timer awareness disabled - skipping timer countdown');
                     return;
                 case 'player_scored':
-                    updateMessage = `Player scored! Player ${this.playerScore} - AI ${this.aiScore}`;
+                    updateMessage = `Score update (game still in progress): Player scored. Player ${this.playerScore} - AI ${this.aiScore}`;
                     console.log('Sending player scored message to AI');
                     break;
                 case 'ai_scored':
-                    updateMessage = `AI scored! Player ${this.playerScore} - AI ${this.aiScore}`;
+                    updateMessage = `Score update (game still in progress): AI scored. Player ${this.playerScore} - AI ${this.aiScore}`;
                     console.log('Sending AI scored message to AI');
                     break;
                 default:
@@ -1732,22 +1732,30 @@ class OpenAIVoiceAssistant {
         const instructions = `
 You are an AI voice assistant integrated into a Virtual Reality Pong game.
 
-IMPORTANT INSTRUCTIONS:
-1. Respond audibly to game events including score updates, game start, game end, and menu selections
+CRITICAL INSTRUCTIONS - FOLLOW PRECISELY:
+1. Respond audibly to game events including score updates, game start, and menu selections
 2. Keep responses brief (1-2 sentences) and enthusiastic
-3. React to scores and celebrate or encourage the player
-4. Always speak aloud - your responses should be heard by the player
-5. NEVER announce the end of the game or say "final score" unless you receive an explicit "Game ended" event
-6. When a player or AI scores, announce the score in various natural ways - don't always say "the score is now"
-7. Do NOT say "thanks for playing" or ask if they want to "try again" or "adjust settings" unless the game has explicitly ended
-8. Be creative and varied with your score announcements - use phrases like "score update", "it's now", "score stands at", "current score", etc.
+3. When announcing scores, just say the numbers with brief encouragement (e.g., "Player 2 - AI 10. Keep it up!")
+4. FORBIDDEN PHRASES: "Game ended", "Game over", "Final score", "Thanks for playing", "Want to try again", "match complete"
+5. YOU MUST NEVER announce the end of the game or use ANY of the forbidden phrases UNLESS the message you receive EXPLICITLY contains "Game ended"
+6. When the AI or player scores, just say the numbers and ONE brief encouragement phrase
+7. DO NOT interpret a high AI score as meaning the game is over - the game is ONLY over when you receive a message that explicitly says "Game ended"
+8. When a player makes a menu selection, acknowledge it and suggest next steps
 
-When a player scores, celebrate and announce the score in a varied, natural way.
-When the AI scores, announce the score and encourage the player.
-ONLY when the game ends (via a "Game ended" event), announce the final result.
-When a player selects a game option like difficulty level, acknowledge their choice.
+MENU GUIDANCE:
+- When at the main menu, explain that they can choose singleplayer mode
+- After selecting singleplayer, explain the difficulty options (easy, medium, expert)
+- For easy difficulty: suggest this for beginners
+- For medium difficulty: suggest this for a moderate challenge
+- For expert difficulty: suggest this for experienced players
 
-Please respond with short encouragement after every game event.
+EXAMPLE APPROPRIATE RESPONSES:
+- When player scores: "Player 2 - AI 9. Nice shot!"
+- When AI scores: "Player 2 - AI 10. Keep trying!"
+- When game starts: "Game started! Good luck!"
+- ONLY when explicit "Game ended" message is received: "Game over! Final score: Player 2 - AI 11."
+
+The game will ONLY end when a message EXPLICITLY contains the text "Game ended". You must NEVER announce the game is over or has ended unless you see those exact words. Score changes alone DO NOT indicate the game has ended.
 `;
         
         try {
@@ -2284,27 +2292,38 @@ Please respond with short encouragement after every game event.
         
         // Only process specific key menu choices
         let updateMessage = '';
+        let requestResponse = true; // We want the AI to respond to all menu actions
         
         switch (buttonName.toLowerCase()) {
             case 'start':
-                updateMessage = 'Player navigated to main menu';
+                updateMessage = 'Player navigated to main menu. Menu options: Singleplayer, Host Game, Join Game.';
                 break;
             case 'singleplayer':
-                updateMessage = 'Player selected single player mode';
+                updateMessage = 'Player selected single player mode. Menu options: Easy, Medium, Expert difficulty.';
                 break;
             case 'easy':
-                updateMessage = 'Player selected easy difficulty';
+                updateMessage = 'Player selected easy difficulty. This is recommended for beginners. The AI paddle will move slowly and be more forgiving.';
                 break;
             case 'medium':
-                updateMessage = 'Player selected medium difficulty';
+                updateMessage = 'Player selected medium difficulty. This provides a moderate challenge with balanced AI paddle speed and response time.';
                 break;
             case 'hard':
             case 'expert':
-                updateMessage = 'Player selected expert difficulty';
+                updateMessage = 'Player selected expert difficulty. This is a challenging setting with the AI paddle moving quickly and responding rapidly to ball movement.';
+                break;
+            case 'host':
+                updateMessage = 'Player selected host game. They are setting up a multiplayer session for others to join.';
+                break;
+            case 'join':
+                updateMessage = 'Player selected join game. They are trying to connect to an existing multiplayer session.';
+                break;
+            case 'back':
+                updateMessage = 'Player selected back button to return to previous menu.';
                 break;
             default:
-                // Skip other menu buttons to keep messages minimal
-                return;
+                // For any other buttons, create a general message but don't request a response
+                updateMessage = `Player selected ${buttonName} option.`;
+                requestResponse = false;
         }
         
         if (updateMessage) {
@@ -2323,6 +2342,16 @@ Please respond with short encouragement after every game event.
             
             // Send the update
             this.sendDataChannelMessage(payload);
+            
+            // Request a response for menu selections to provide guidance
+            if (requestResponse) {
+                setTimeout(() => {
+                    const responsePayload = JSON.stringify({
+                        type: 'response.create'
+                    });
+                    this.sendDataChannelMessage(responsePayload);
+                }, 500);
+            }
         }
     }
     
