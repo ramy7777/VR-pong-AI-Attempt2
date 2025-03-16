@@ -120,17 +120,34 @@ export class GameAIUpdater {
      */
     handleGameEnded(event) {
         console.log('GameAIUpdater: Game ended event received');
+        
+        // Calculate final match time before changing game state
+        let matchTimeElapsed = 0;
+        if (this.gameStartTime > 0) {
+            matchTimeElapsed = Math.floor((Date.now() - this.gameStartTime) / 1000);
+            console.log(`GameAIUpdater: Game ended after ${matchTimeElapsed} seconds`);
+        }
+        
+        // Update state variables
         this.gameInProgress = false;
         this.gameTimerRunning = false;
         
-        // Calculate final match time
-        if (this.gameStartTime > 0) {
-            this.matchTimeElapsed = Math.floor((Date.now() - this.gameStartTime) / 1000);
-            console.log(`GameAIUpdater: Game ended after ${this.matchTimeElapsed} seconds`);
-        }
-        
-        // Send update to voice assistant if available
-        this.sendUpdate('game_ended');
+        // Ensure there's a slight delay before sending the game_ended event
+        // This prevents any race conditions with other updates
+        setTimeout(() => {
+            // Send update to voice assistant if available
+            this.sendUpdate('game_ended', {
+                matchTimeElapsed,
+                gameInProgress: false, // Explicitly mark as not in progress
+                finalScore: {
+                    player: this.playerScore,
+                    ai: this.aiScore
+                }
+            });
+            
+            // Stop any active timers
+            this.stopTipsTimer();
+        }, 1000); // Wait 1 second before sending game_ended message
     }
     
     /**
@@ -158,10 +175,15 @@ export class GameAIUpdater {
                 console.log(`GameAIUpdater: Score updated: Player ${playerScore} - AI ${aiScore}, Scorer: ${scorer}`);
                 
                 // Send update based on who scored
+                const updateData = {
+                    lastRallyDuration: this.lastRallyDuration,
+                    gameInProgress: this.gameInProgress
+                };
+                
                 if (scorer === 'player') {
-                    this.sendUpdate('player_scored');
+                    this.sendUpdate('player_scored', updateData);
                 } else if (scorer === 'ai') {
-                    this.sendUpdate('ai_scored');
+                    this.sendUpdate('ai_scored', updateData);
                 }
             }
         } catch (error) {
@@ -218,19 +240,29 @@ export class GameAIUpdater {
                     return;
                 }
                 
-                // Log timer updates occasionally (once every 5 seconds)
-                if (Math.floor(timeLeft) % 5 === 0) {
-                    const minutes = Math.floor(timeLeft / 60);
-                    const seconds = Math.floor(timeLeft % 60);
-                    console.log(`GameAIUpdater: Timer update: ${minutes}:${seconds.toString().padStart(2, '0')} remaining`);
+                // Log timer updates only on significant changes to reduce spam
+                const previousMinutes = Math.floor((this.lastLoggedTimerValue || 0) / 60);
+                const previousSeconds = Math.floor((this.lastLoggedTimerValue || 0) % 60);
+                const currentMinutes = Math.floor(timeLeft / 60);
+                const currentSeconds = Math.floor(timeLeft % 60);
+                
+                // Only log when minutes change or seconds change by 15
+                const shouldLog = 
+                    previousMinutes !== currentMinutes || 
+                    Math.floor(previousSeconds / 15) !== Math.floor(currentSeconds / 15);
+                
+                if (shouldLog) {
+                    console.log(`GameAIUpdater: Timer update: ${currentMinutes}:${currentSeconds.toString().padStart(2, '0')} remaining`);
+                    this.lastLoggedTimerValue = timeLeft;
                 }
                 
                 // Only process warnings if the timer is running and game is in progress
                 if (this.gameInProgress && isRunning && !isFinished) {
                     this.checkTimerWarnings(timeLeft);
                     
-                    // Periodically announce time remaining
-                    if (Math.floor(timeLeft) % 30 === 0 && timeLeft > 10) {
+                    // Periodically announce time remaining only at exactly 120, 90, 60, 30 seconds
+                    const timePoints = [120, 90, 60, 30];
+                    if (timePoints.includes(Math.floor(timeLeft))) {
                         this.announceTimeRemaining();
                     }
                 }
@@ -250,42 +282,41 @@ export class GameAIUpdater {
         const minutes = Math.floor(timeLeft / 60);
         const seconds = Math.floor(timeLeft % 60);
         
-        // Check standard thresholds
-        for (const threshold of this.timerWarningThresholds) {
+        // Only check specific thresholds (60, 30, 10 seconds) to reduce messages
+        const reducedThresholds = [60, 30, 10];
+        
+        // Check each threshold only once
+        for (const threshold of reducedThresholds) {
             // Check if we've crossed a threshold (going from above to below or equal)
+            // and ensure we haven't already sent a warning at this threshold
             if (timeLeft <= threshold && 
-                (this.lastWarningAt === 0 || 
-                 this.lastWarningAt > threshold)) {
+                Math.floor(this.lastWarningAt) > threshold) {
                 
                 console.log(`GameAIUpdater: Timer warning threshold crossed: ${minutes}:${seconds.toString().padStart(2, '0')} remaining`);
                 
-                this.sendUpdate('timer_warning', { timeLeft, minutes, seconds });
-                this.lastWarningAt = timeLeft;
+                // Don't send timer warnings too close together
+                const timeSinceLastWarning = this.lastWarningAt - timeLeft;
+                if (timeSinceLastWarning >= 10 || threshold === 10) { // At least 10 seconds between warnings
+                    this.sendUpdate('timer_warning', { timeLeft, minutes, seconds });
+                    this.lastWarningAt = timeLeft;
+                }
                 break;
             }
         }
         
-        // Special handling for final 10 seconds - announce each second
-        if (timeLeft <= 10 && Math.floor(this.lastWarningAt) !== Math.floor(timeLeft)) {
+        // Special handling for final 10 seconds - announce only 5, 3, and 1 second marks
+        const countdownMarks = [5, 3, 1];
+        if (timeLeft <= 10 && 
+            countdownMarks.includes(Math.ceil(timeLeft)) && 
+            Math.floor(this.lastWarningAt) !== Math.ceil(timeLeft)) {
+            
             console.log(`GameAIUpdater: Timer countdown: ${Math.ceil(timeLeft)} seconds left!`);
             
-            // For each second in the final 10, do a countdown announcement
-            let countdownMessage = '';
+            // Prepare countdown message
+            let countdownMessage = `${Math.ceil(timeLeft)} seconds left!`;
             
-            if (Math.ceil(timeLeft) === 10) {
-                countdownMessage = "Final 10 seconds countdown starting!";
-            } else if (Math.ceil(timeLeft) === 5) {
-                countdownMessage = "Just 5 seconds left!";
-            } else if (Math.ceil(timeLeft) === 3) {
-                countdownMessage = "3...";
-            } else if (Math.ceil(timeLeft) === 2) {
-                countdownMessage = "2...";
-            } else if (Math.ceil(timeLeft) === 1) {
-                countdownMessage = "1...";
-            } else if (Math.floor(timeLeft) < 0.5) {
-                countdownMessage = "Time's up!";
-            } else {
-                countdownMessage = `${Math.ceil(timeLeft)}...`;
+            if (Math.ceil(timeLeft) === 1) {
+                countdownMessage = "Final second!";
             }
             
             this.sendUpdate('timer_countdown', { 
@@ -309,18 +340,24 @@ export class GameAIUpdater {
         const minutes = Math.floor(timeLeft / 60);
         const seconds = Math.floor(timeLeft % 60);
         
+        // Only announce at specific intervals to avoid too many messages
         let timeMessage = '';
         
-        // Format the time message based on how much time is left
-        if (minutes > 0) {
-            timeMessage = `${minutes} minute${minutes > 1 ? 's' : ''} and ${seconds} seconds remaining.`;
-        } else if (seconds > 30) {
-            timeMessage = `${seconds} seconds remaining.`;
-        } else if (seconds > 10) {
-            timeMessage = `Only ${seconds} seconds left!`;
+        if (minutes === 2) {
+            timeMessage = "2 minutes remaining in the game.";
+        } else if (minutes === 1 && seconds === 30) {
+            timeMessage = "1 minute and 30 seconds remaining.";
+        } else if (minutes === 1 && seconds === 0) {
+            timeMessage = "1 minute remaining. Getting close!";
+        } else if (minutes === 0 && seconds === 30) {
+            timeMessage = "30 seconds left! Final push!";
         } else {
-            timeMessage = `Final countdown! ${seconds} seconds!`;
+            // Don't announce for other times
+            return;
         }
+        
+        // Include the current score in time announcements
+        timeMessage += ` The score is ${this.playerScore}-${this.aiScore}.`;
         
         this.sendUpdate('time_announcement', { 
             timeLeft, 
@@ -458,16 +495,7 @@ export class GameAIUpdater {
                 aiSlowdownActive: this.aiSlowdownActive
             };
             
-            // If this is a special message type, handle accordingly
-            if (eventType === 'gameplay_tip' || eventType === 'time_announcement') {
-                // These are sent as system messages with the message field
-                const message = updatedData.message || 'Game update';
-                this.voiceAssistant.sendSystemMessage(message);
-                console.log(`GameAIUpdater: Sent ${eventType} to voice assistant: "${message}"`);
-                return;
-            }
-            
-            // Use the voice assistant's sendGameStateUpdate method for other updates
+            // Use the voice assistant's sendGameStateUpdate method for all updates
             if (typeof this.voiceAssistant.sendGameStateUpdate === 'function') {
                 this.voiceAssistant.sendGameStateUpdate(eventType, updatedData);
                 console.log(`GameAIUpdater: Sent ${eventType} update to voice assistant`);

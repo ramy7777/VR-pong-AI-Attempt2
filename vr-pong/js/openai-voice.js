@@ -48,11 +48,12 @@ class OpenAIVoiceAssistant {
         this.receivingRemoteAudio = false;
         
         // Game state tracking
-        // We're keeping basic game state here for backward compatibility
-        // but most game state tracking will be handled by GameAIUpdater
         this.gameInProgress = false;
         this.playerScore = 0;
         this.aiScore = 0;
+        this.gameTimerValue = 150; // Default 2.5 minutes (150 seconds)
+        this.gameTimerRunning = false;
+        this.lastMessageTime = 0; // For throttling messages
         
         // Message handling
         this.messageQueue = [];
@@ -293,11 +294,20 @@ class OpenAIVoiceAssistant {
                         return;
                     }
                     
-                    // Log timer updates occasionally (once every 5 seconds)
-                    if (Math.floor(timeLeft) % 5 === 0) {
-                        const minutes = Math.floor(timeLeft / 60);
-                        const seconds = Math.floor(timeLeft % 60);
-                        console.log(`Timer update: ${minutes}:${seconds.toString().padStart(2, '0')} remaining, running=${isRunning}, finished=${isFinished}`);
+                    // Log timer updates only on significant changes to reduce spam
+                    const previousMinutes = Math.floor((this.lastLoggedTimerValue || 0) / 60);
+                    const previousSeconds = Math.floor((this.lastLoggedTimerValue || 0) % 60);
+                    const currentMinutes = Math.floor(timeLeft / 60);
+                    const currentSeconds = Math.floor(timeLeft % 60);
+                    
+                    // Only log when minutes change or seconds change by 15
+                    const shouldLog = 
+                        previousMinutes !== currentMinutes || 
+                        Math.floor(previousSeconds / 15) !== Math.floor(currentSeconds / 15);
+                    
+                    if (shouldLog) {
+                        console.log(`Timer update: ${currentMinutes}:${currentSeconds.toString().padStart(2, '0')} remaining, running=${isRunning}, finished=${isFinished}`);
+                        this.lastLoggedTimerValue = timeLeft;
                     }
                     
                     // Only process warnings if the timer is actually running and the game is in progress
@@ -355,13 +365,24 @@ class OpenAIVoiceAssistant {
         }, 1000);
     }
     
-    // New method to check and trigger timer warnings
+    /**
+     * Check if the current time left crosses any warning thresholds
+     */
     checkTimerWarnings(timeLeft) {
         if (!this.connected || !this.gameInProgress) return;
         
         // Calculate minutes and seconds for display
         const minutes = Math.floor(timeLeft / 60);
         const seconds = Math.floor(timeLeft % 60);
+        
+        // Skip if time is negative
+        if (timeLeft <= 0) return;
+        
+        // Ensure timerWarningThresholds is iterable
+        if (!this.timerWarningThresholds || !Array.isArray(this.timerWarningThresholds)) {
+            this.timerWarningThresholds = [60, 30, 20, 10]; // Default thresholds
+            console.log('Timer warning thresholds initialized with defaults');
+        }
         
         // Check standard thresholds
         for (const threshold of this.timerWarningThresholds) {
@@ -1617,84 +1638,126 @@ class OpenAIVoiceAssistant {
         }
         
         try {
+            // Extract data from extraData
+            const { 
+                playerScore, 
+                aiScore, 
+                gameTimerValue,
+                message,
+                lastRallyDuration,
+                gameInProgress
+            } = extraData;
+            
+            // Update our internal state tracking
+            if (playerScore !== undefined) this.playerScore = playerScore;
+            if (aiScore !== undefined) this.aiScore = aiScore;
+            if (gameTimerValue !== undefined) this.gameTimerValue = gameTimerValue;
+            if (gameInProgress !== undefined) this.gameInProgress = gameInProgress;
+            
+            // Message throttling - don't send non-critical updates too frequently
+            const criticalEvents = ['game_started', 'game_ended', 'player_scored', 'ai_scored', 'timer_warning', 'timer_countdown'];
+            const now = Date.now();
+            
+            if (!criticalEvents.includes(eventType)) {
+                // Skip non-critical messages if sent too frequently (< 1.5 seconds apart)
+                if (this.lastMessageTime && (now - this.lastMessageTime < 1500)) {
+                    console.log(`Throttling ${eventType} update (too frequent)`);
+                    return;
+                }
+            }
+            
+            // Skip very short rallies to reduce noise
+            if ((eventType === 'paddle_hit' || eventType === 'wall_hit') && 
+                extraData.currentRallyDuration && extraData.currentRallyDuration < 2) {
+                console.log(`Skipping ${eventType} update (rally too short)`);
+                return;
+            }
+            
             let updateMessage = '';
+            // Always add game status prefix except for game_ended event
+            const gameStatusPrefix = eventType !== 'game_ended' && this.gameInProgress ? 
+                "[GAME IN PROGRESS] " : "";
             
             // Construct appropriate message based on event type
             switch (eventType) {
                 case 'game_started':
                     const timerInfo = this.gameTimerValue ? ` Game time set to ${Math.floor(this.gameTimerValue / 60)}:${(this.gameTimerValue % 60).toString().padStart(2, '0')}.` : '';
-                    updateMessage = `Game has started! The player is facing off against the AI in a virtual reality Pong match.${timerInfo}`;
+                    updateMessage = `${gameStatusPrefix}Game has started! The player is facing off against the AI in a virtual reality Pong match.${timerInfo} Starting score is 0-0.`;
                     break;
                     
                 case 'game_ended':
                     const finalScore = `${this.playerScore}-${this.aiScore}`;
-                    const matchDuration = this.matchTimeElapsed > 0 ? ` Match lasted ${this.matchTimeElapsed} seconds.` : '';
                     
                     if (this.playerScore > this.aiScore) {
-                        updateMessage = `Game has ended. Player wins with a score of ${finalScore}!${matchDuration}`;
+                        updateMessage = `GAME OVER: Player wins with a final score of ${finalScore}!`;
                     } else if (this.playerScore < this.aiScore) {
-                        updateMessage = `Game has ended. AI wins with a score of ${finalScore}.${matchDuration}`;
+                        updateMessage = `GAME OVER: AI wins with a final score of ${finalScore}.`;
                     } else {
-                        updateMessage = `Game has ended in a tie with a score of ${finalScore}.${matchDuration}`;
+                        updateMessage = `GAME OVER: Game ended in a tie with a final score of ${finalScore}.`;
                     }
                     break;
                     
                 case 'player_scored':
-                    const rallyInfo = this.lastRallyDuration > 0 ? ` Rally lasted ${this.lastRallyDuration} seconds.` : '';
-                    const playerScoreMessage = `Player scored a point! The score is now ${this.playerScore}-${this.aiScore}.${rallyInfo}`;
-                    // Add extra encouragement for consecutive player scores
-                    updateMessage = playerScoreMessage;
+                    const rallyInfo = lastRallyDuration > 0 ? ` Rally lasted ${lastRallyDuration} seconds.` : '';
+                    updateMessage = `${gameStatusPrefix}Player scored a point! The score is now ${this.playerScore}-${this.aiScore}.${rallyInfo}`;
                     break;
                     
                 case 'ai_scored':
-                    const aiRallyInfo = this.lastRallyDuration > 0 ? ` Rally lasted ${this.lastRallyDuration} seconds.` : '';
-                    const aiScoreMessage = `AI scored a point. The score is now ${this.playerScore}-${this.aiScore}.${aiRallyInfo}`;
-                    updateMessage = aiScoreMessage;
+                    const aiRallyInfo = lastRallyDuration > 0 ? ` Rally lasted ${lastRallyDuration} seconds.` : '';
+                    updateMessage = `${gameStatusPrefix}AI scored a point. The score is now ${this.playerScore}-${this.aiScore}.${aiRallyInfo}`;
                     break;
                     
                 case 'paddle_hit':
-                    // Randomize paddle hit messages for variety
                     const paddleMessages = [
-                        `Player hit the ball with their paddle. Rally has been going for ${this.currentRallyDuration} seconds.`,
-                        `Nice paddle contact by the player. Current rally: ${this.currentRallyDuration} seconds.`,
-                        `The ball was returned with the paddle. Rally time: ${this.currentRallyDuration} seconds.`,
-                        `Good paddle control on that return! Rally has lasted ${this.currentRallyDuration} seconds so far.`
+                        `Player hit the ball with their paddle. Current score: ${this.playerScore}-${this.aiScore}.`,
+                        `Nice paddle contact by the player. Score is ${this.playerScore}-${this.aiScore}.`,
+                        `The ball was returned with the paddle. Score remains ${this.playerScore}-${this.aiScore}.`
                     ];
-                    updateMessage = paddleMessages[Math.floor(Math.random() * paddleMessages.length)];
+                    updateMessage = `${gameStatusPrefix}${paddleMessages[Math.floor(Math.random() * paddleMessages.length)]}`;
                     break;
                     
                 case 'wall_hit':
-                    updateMessage = `The ball hit a wall boundary. Current rally: ${this.currentRallyDuration} seconds.`;
+                    updateMessage = `${gameStatusPrefix}The ball hit a wall boundary. Score is ${this.playerScore}-${this.aiScore}.`;
                     break;
                 
                 case 'ai_slowdown':
-                    updateMessage = "The AI paddle is temporarily slowing down. Player has an advantage for a few seconds.";
+                    updateMessage = `${gameStatusPrefix}The AI paddle is temporarily slowing down. Player has an advantage for a few seconds. Score: ${this.playerScore}-${this.aiScore}.`;
                     break;
                     
                 case 'ai_speed_restored':
-                    updateMessage = "The AI paddle has returned to normal speed.";
+                    updateMessage = `${gameStatusPrefix}The AI paddle has returned to normal speed. Score: ${this.playerScore}-${this.aiScore}.`;
                     break;
                 
                 case 'timer_warning':
                     const { minutes, seconds } = extraData;
                     if (minutes > 0) {
-                        updateMessage = `${minutes} minute${minutes > 1 ? 's' : ''} remaining in the game.`;
+                        updateMessage = `${gameStatusPrefix}${minutes} minute${minutes > 1 ? 's' : ''} remaining in the game. The score is ${this.playerScore}-${this.aiScore}.`;
                     } else {
-                        updateMessage = `Only ${seconds} seconds remaining in the game!`;
+                        updateMessage = `${gameStatusPrefix}Only ${seconds} seconds remaining in the game! The score is ${this.playerScore}-${this.aiScore}.`;
                     }
                     break;
                     
                 case 'timer_countdown':
                     // Use custom message if provided, otherwise use the default format
-                    if (extraData.message) {
-                        updateMessage = extraData.message;
+                    if (message) {
+                        updateMessage = `${gameStatusPrefix}${message} Current score: ${this.playerScore}-${this.aiScore}.`;
                     } else {
-                        updateMessage = `${Math.ceil(extraData.timeLeft)} seconds left!`;
+                        updateMessage = `${gameStatusPrefix}${Math.ceil(extraData.timeLeft)} seconds left! Score: ${this.playerScore}-${this.aiScore}.`;
                     }
                     break;
                     
+                case 'time_announcement':
+                    // Use the provided message which should already have the score
+                    updateMessage = `${gameStatusPrefix}${message || `Game time update. Current score: ${this.playerScore}-${this.aiScore}.`}`;
+                    break;
+                    
+                case 'gameplay_tip':
+                    // Use the provided message which should be just the tip
+                    updateMessage = `${gameStatusPrefix}${message ? `Tip: ${message} (Score: ${this.playerScore}-${this.aiScore})` : `Game tip. Score: ${this.playerScore}-${this.aiScore}.`}`;
+                    break;
+                    
                 default:
-                    updateMessage = `Game update: ${eventType}`;
+                    updateMessage = `${gameStatusPrefix}Game update: ${eventType}. Score: ${this.playerScore}-${this.aiScore}.`;
             }
             
             // Update UI
@@ -1719,14 +1782,20 @@ class OpenAIVoiceAssistant {
             this.sendDataChannelMessage(payload);
             console.log(`Game state update sent: ${eventType} - ${updateMessage}`);
             
-            // Request a response for all game events
-            const responsePayload = JSON.stringify({
-                type: 'response.create'
-            });
+            // Update last message time for throttling
+            this.lastMessageTime = now;
             
-            setTimeout(() => {
-                this.sendDataChannelMessage(responsePayload);
-            }, 500);
+            // Request a response for important game events only
+            if (criticalEvents.includes(eventType)) {
+                const responsePayload = JSON.stringify({
+                    type: 'response.create'
+                });
+                
+                setTimeout(() => {
+                    this.sendDataChannelMessage(responsePayload);
+                }, 500);
+            }
+            
         } catch (error) {
             console.error('Error sending game state update:', error);
         }
@@ -2254,6 +2323,71 @@ Do not mention anything about being an AI language model, focus only on your rol
         }
         
         // ... existing cleanup code if any ...
+    }
+    
+    // Reset the assistant's state for a new game
+    resetAssistantState() {
+        console.log('Resetting assistant state for new game');
+        
+        // Reset game state variables
+        this.gameInProgress = false;
+        this.playerScore = 0;
+        this.aiScore = 0;
+        this.gameTimerValue = 150;
+        this.gameTimerRunning = false;
+        this.lastMessageTime = 0;
+        
+        // If not connected, there's nothing more to do
+        if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
+            console.log('Cannot reset assistant: data channel not open');
+            return;
+        }
+        
+        // Wait a bit to ensure separation between game sessions
+        setTimeout(() => {
+            try {
+                // Send a reset message to the assistant
+                const resetInstructions = 
+                `GAME RESET: A new Pong match is about to begin.
+
+                IMPORTANT INSTRUCTIONS:
+                1. The score is now 0-0, forget previous game details.
+                2. Maintain your enthusiastic personality as a VR Pong commentator and coach.
+                3. Focus on major events like scoring, game start/end, and significant timer milestones.
+                4. When you receive score updates, acknowledge the CURRENT ACCURATE SCORE.
+                5. The game officially begins when you receive a "game_started" event.
+                6. The game is ONLY over when you receive a "GAME OVER" message.
+                7. NEVER assume the game is over based on score, only when explicitly told.
+                8. Messages with "[GAME IN PROGRESS]" indicate the game is still ongoing.
+                9. Messages with timer remaining indicate the game is still in progress.
+                
+                You'll receive score and timer updates shortly. Prepare for an exciting new match!`;
+                
+                // Format message according to OpenAI's WebRTC API requirements
+                const payload = JSON.stringify({
+                    type: 'conversation.item.create',
+                    item: {
+                        type: 'message',
+                        role: 'system',
+                        content: [{
+                            type: 'input_text', // System messages must use 'input_text' type
+                            text: resetInstructions
+                        }]
+                    }
+                });
+                
+                // Send the reset message
+                this.sendDataChannelMessage(payload);
+                console.log('Reset instructions sent to assistant');
+                
+                // Let the user know the assistant has been reset
+                this.updateStatus('Assistant reset and ready for new game');
+                this.addMessage('system', 'Assistant has been reset for a new game');
+                
+            } catch (error) {
+                console.error('Error resetting assistant state:', error);
+            }
+        }, 1500); // Wait 1.5 seconds to ensure proper separation
     }
 }
 
