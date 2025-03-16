@@ -204,7 +204,7 @@ export class Game {
         
         // Set up the callbacks for the multiplayer menu buttons
         this.multiplayerMenu.setCallbacks({
-            onSinglePlayer: () => {
+            onSingleplayer: () => {
                 console.log("Showing difficulty selection menu...");
                 // First hide the multiplayer menu
                 this.multiplayerMenu.hide();
@@ -535,6 +535,11 @@ export class Game {
                         
                         // Log button press time for debugging
                         console.log(`Start button pressed at ${Date.now()}`);
+                        
+                        // Report start button press to OpenAI voice assistant if available
+                        if (window.openAIVoice) {
+                            window.openAIVoice.reportMenuButtonPress('start');
+                        }
                         
                         // Proceed with game logic after successful press
                         if (this.multiplayerManager.isConnected) {
@@ -2024,5 +2029,20 @@ export class Game {
                 this.difficultyMenu.scheduleTextRefreshes();
             }
         }
+    }
+
+    // Single player difficulty selection handling
+    handleDifficultySelection(difficulty) {
+        console.log(`Starting single player game on ${difficulty} difficulty...`);
+        this.difficultyMenu.hide();
+        this.resetGameState();
+        
+        // Report difficulty selection to OpenAI voice assistant if available
+        if (window.openAIVoice) {
+            window.openAIVoice.reportMenuButtonPress(difficulty);
+        }
+
+        // Set the difficulty
+        this.gameDifficulty = difficulty;
     }
 }

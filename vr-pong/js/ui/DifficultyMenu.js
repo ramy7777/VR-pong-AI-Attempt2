@@ -739,12 +739,27 @@ export class DifficultyMenu {
         switch (buttonKey) {
             case 'easy':
                 if (this.callbacks.onEasy) this.callbacks.onEasy();
+                
+                // Report easy difficulty selection to OpenAI voice assistant if available
+                if (window.openAIVoice) {
+                    window.openAIVoice.reportMenuButtonPress('easy');
+                }
                 break;
             case 'medium':
                 if (this.callbacks.onMedium) this.callbacks.onMedium();
+                
+                // Report medium difficulty selection to OpenAI voice assistant if available
+                if (window.openAIVoice) {
+                    window.openAIVoice.reportMenuButtonPress('medium');
+                }
                 break;
             case 'expert':
                 if (this.callbacks.onExpert) this.callbacks.onExpert();
+                
+                // Report expert difficulty selection to OpenAI voice assistant if available
+                if (window.openAIVoice) {
+                    window.openAIVoice.reportMenuButtonPress('expert');
+                }
                 break;
             case 'back':
                 if (this.callbacks.onBack) this.callbacks.onBack();

@@ -12,7 +12,7 @@ export class MultiplayerMenu {
         };
         this.isVisible = false;
         this.callbacks = {
-            onSinglePlayer: null,
+            onSingleplayer: null,
             onHost: null,
             onJoin: null,
             onBack: null
@@ -695,14 +695,24 @@ export class MultiplayerMenu {
         
         // Execute callback
         console.log(`MultiplayerMenu: Executing callback for button: ${buttonKey}`);
-        if (buttonKey === 'singleplayer' && this.callbacks.onSinglePlayer) {
-            this.callbacks.onSinglePlayer();
-        } else if (buttonKey === 'host' && this.callbacks.onHost) {
-            this.callbacks.onHost();
-        } else if (buttonKey === 'join' && this.callbacks.onJoin) {
-            this.callbacks.onJoin();
-        } else if (buttonKey === 'back' && this.callbacks.onBack) {
-            this.callbacks.onBack();
+        switch (buttonKey) {
+            case 'singleplayer':
+                if (this.callbacks.onSingleplayer) this.callbacks.onSingleplayer();
+                
+                // Report singleplayer button press to OpenAI voice assistant if available
+                if (window.openAIVoice) {
+                    window.openAIVoice.reportMenuButtonPress('singleplayer');
+                }
+                break;
+            case 'host':
+                if (this.callbacks.onHost) this.callbacks.onHost();
+                break;
+            case 'join':
+                if (this.callbacks.onJoin) this.callbacks.onJoin();
+                break;
+            case 'back':
+                if (this.callbacks.onBack) this.callbacks.onBack();
+                break;
         }
         
         // Reset button state after 300ms (matching the transition duration)

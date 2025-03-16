@@ -363,6 +363,23 @@ class OpenAIVoiceAssistant {
                 }
             }
         }, 1000);
+        
+        // Add event listeners for menu button clicks
+        document.addEventListener('menu-button-click', (event) => {
+            try {
+                if (event.detail && event.detail.button) {
+                    const buttonName = event.detail.button;
+                    console.log(`Menu button clicked: ${buttonName}`);
+                    
+                    // If connected, send menu navigation update
+                    if (this.connected) {
+                        this.sendMenuNavigationUpdate(buttonName);
+                    }
+                }
+            } catch (error) {
+                console.error('Error handling menu button click:', error);
+            }
+        });
     }
     
     /**
@@ -1581,8 +1598,8 @@ class OpenAIVoiceAssistant {
     async sendGreeting() {
         console.log('Sending initial greeting...');
         
-        // Define greeting message with game-specific content - slightly more conversational
-        const greetingMessage = "Ready to play pong!";
+        // Define simple greeting message without game-specific content
+        const greetingMessage = "Hello! I'm an AI assistant for this VR Pong game. Game updates are currently disabled for testing. How can I help you?";
         
         try {
             // Wait to ensure connection is stable
@@ -1632,140 +1649,38 @@ class OpenAIVoiceAssistant {
     
     // Send game state updates to OpenAI
     sendGameStateUpdate(eventType, extraData = {}) {
-        if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
-            console.log(`Cannot send ${eventType} update: data channel not open`);
-            return;
-        }
-        
         try {
-            // Extract data from extraData
-            const { 
-                playerScore, 
-                aiScore, 
-                gameTimerValue,
-                message,
-                lastRallyDuration,
-                gameInProgress
-            } = extraData;
-            
-            // Update our internal state tracking
-            if (playerScore !== undefined) this.playerScore = playerScore;
-            if (aiScore !== undefined) this.aiScore = aiScore;
-            if (gameTimerValue !== undefined) this.gameTimerValue = gameTimerValue;
-            if (gameInProgress !== undefined) this.gameInProgress = gameInProgress;
-            
-            // Message throttling - don't send non-critical updates too frequently
-            const criticalEvents = ['game_started', 'game_ended', 'player_scored', 'ai_scored', 'timer_warning', 'timer_countdown'];
-            const now = Date.now();
-            
-            if (!criticalEvents.includes(eventType)) {
-                // Skip non-critical messages if sent too frequently (< 1.5 seconds apart)
-                if (this.lastMessageTime && (now - this.lastMessageTime < 1500)) {
-                    console.log(`Throttling ${eventType} update (too frequent)`);
-                    return;
-                }
-            }
-            
-            // Skip very short rallies to reduce noise
-            if ((eventType === 'paddle_hit' || eventType === 'wall_hit') && 
-                extraData.currentRallyDuration && extraData.currentRallyDuration < 2) {
-                console.log(`Skipping ${eventType} update (rally too short)`);
+            // Skip if not connected or data channel isn't ready
+            if (!this.connected || !this.dataChannel || this.dataChannel.readyState !== 'open') {
                 return;
             }
             
-            let updateMessage = '';
-            // Always add game status prefix except for game_ended event
-            const gameStatusPrefix = eventType !== 'game_ended' && this.gameInProgress ? 
-                "[GAME IN PROGRESS] " : "";
+            // Update our internal state tracking
+            if (extraData.playerScore !== undefined) this.playerScore = extraData.playerScore;
+            if (extraData.aiScore !== undefined) this.aiScore = extraData.aiScore;
+            if (extraData.gameTimerValue !== undefined) this.gameTimerValue = extraData.gameTimerValue;
+            if (extraData.gameInProgress !== undefined) this.gameInProgress = extraData.gameInProgress;
             
-            // Construct appropriate message based on event type
+            // Only process critical game events to minimize messages
+            let updateMessage = '';
+            
             switch (eventType) {
                 case 'game_started':
-                    const timerInfo = this.gameTimerValue ? ` Game time set to ${Math.floor(this.gameTimerValue / 60)}:${(this.gameTimerValue % 60).toString().padStart(2, '0')}.` : '';
-                    updateMessage = `${gameStatusPrefix}Game has started! The player is facing off against the AI in a virtual reality Pong match.${timerInfo} Starting score is 0-0.`;
+                    updateMessage = 'Game started. Good luck!';
                     break;
-                    
                 case 'game_ended':
-                    const finalScore = `${this.playerScore}-${this.aiScore}`;
-                    
-                    if (this.playerScore > this.aiScore) {
-                        updateMessage = `GAME OVER: Player wins with a final score of ${finalScore}!`;
-                    } else if (this.playerScore < this.aiScore) {
-                        updateMessage = `GAME OVER: AI wins with a final score of ${finalScore}.`;
-                    } else {
-                        updateMessage = `GAME OVER: Game ended in a tie with a final score of ${finalScore}.`;
-                    }
+                    const result = this.playerScore > this.aiScore ? 'You won' : 
+                                  this.playerScore < this.aiScore ? 'AI won' : 'Game ended in a tie';
+                    updateMessage = `Game ended. ${result}. Final score: You ${this.playerScore} - AI ${this.aiScore}`;
                     break;
-                    
-                case 'player_scored':
-                    const rallyInfo = lastRallyDuration > 0 ? ` Rally lasted ${lastRallyDuration} seconds.` : '';
-                    updateMessage = `${gameStatusPrefix}Player scored a point! The score is now ${this.playerScore}-${this.aiScore}.${rallyInfo}`;
-                    break;
-                    
-                case 'ai_scored':
-                    const aiRallyInfo = lastRallyDuration > 0 ? ` Rally lasted ${lastRallyDuration} seconds.` : '';
-                    updateMessage = `${gameStatusPrefix}AI scored a point. The score is now ${this.playerScore}-${this.aiScore}.${aiRallyInfo}`;
-                    break;
-                    
-                case 'paddle_hit':
-                    const paddleMessages = [
-                        `Player hit the ball with their paddle. Current score: ${this.playerScore}-${this.aiScore}.`,
-                        `Nice paddle contact by the player. Score is ${this.playerScore}-${this.aiScore}.`,
-                        `The ball was returned with the paddle. Score remains ${this.playerScore}-${this.aiScore}.`
-                    ];
-                    updateMessage = `${gameStatusPrefix}${paddleMessages[Math.floor(Math.random() * paddleMessages.length)]}`;
-                    break;
-                    
-                case 'wall_hit':
-                    updateMessage = `${gameStatusPrefix}The ball hit a wall boundary. Score is ${this.playerScore}-${this.aiScore}.`;
-                    break;
-                
-                case 'ai_slowdown':
-                    updateMessage = `${gameStatusPrefix}The AI paddle is temporarily slowing down. Player has an advantage for a few seconds. Score: ${this.playerScore}-${this.aiScore}.`;
-                    break;
-                    
-                case 'ai_speed_restored':
-                    updateMessage = `${gameStatusPrefix}The AI paddle has returned to normal speed. Score: ${this.playerScore}-${this.aiScore}.`;
-                    break;
-                
-                case 'timer_warning':
-                    const { minutes, seconds } = extraData;
-                    if (minutes > 0) {
-                        updateMessage = `${gameStatusPrefix}${minutes} minute${minutes > 1 ? 's' : ''} remaining in the game. The score is ${this.playerScore}-${this.aiScore}.`;
-                    } else {
-                        updateMessage = `${gameStatusPrefix}Only ${seconds} seconds remaining in the game! The score is ${this.playerScore}-${this.aiScore}.`;
-                    }
-                    break;
-                    
-                case 'timer_countdown':
-                    // Use custom message if provided, otherwise use the default format
-                    if (message) {
-                        updateMessage = `${gameStatusPrefix}${message} Current score: ${this.playerScore}-${this.aiScore}.`;
-                    } else {
-                        updateMessage = `${gameStatusPrefix}${Math.ceil(extraData.timeLeft)} seconds left! Score: ${this.playerScore}-${this.aiScore}.`;
-                    }
-                    break;
-                    
-                case 'time_announcement':
-                    // Use the provided message which should already have the score
-                    updateMessage = `${gameStatusPrefix}${message || `Game time update. Current score: ${this.playerScore}-${this.aiScore}.`}`;
-                    break;
-                    
-                case 'gameplay_tip':
-                    // Use the provided message which should be just the tip
-                    updateMessage = `${gameStatusPrefix}${message ? `Tip: ${message} (Score: ${this.playerScore}-${this.aiScore})` : `Game tip. Score: ${this.playerScore}-${this.aiScore}.`}`;
-                    break;
-                    
                 default:
-                    updateMessage = `${gameStatusPrefix}Game update: ${eventType}. Score: ${this.playerScore}-${this.aiScore}.`;
+                    // Skip all other event types to minimize messages
+                    return;
             }
             
-            // Update UI
-            this.updateStatus(`Game update: ${updateMessage}`);
-            this.addMessage('system', updateMessage);
+            console.log(`Game state update: ${updateMessage}`);
             
             // Format message according to OpenAI's WebRTC API requirements
-            // System messages use 'input_text' type (confirmed from error messages)
             const payload = JSON.stringify({
                 type: 'conversation.item.create',
                 item: {
@@ -1778,20 +1693,15 @@ class OpenAIVoiceAssistant {
                 }
             });
             
-            // Use the rate-limited message sender instead of direct send
+            // Send the update
             this.sendDataChannelMessage(payload);
-            console.log(`Game state update sent: ${eventType} - ${updateMessage}`);
             
-            // Update last message time for throttling
-            this.lastMessageTime = now;
-            
-            // Request a response for important game events only
-            if (criticalEvents.includes(eventType)) {
-                const responsePayload = JSON.stringify({
-                    type: 'response.create'
-                });
-                
+            // Request a response only for game end events
+            if (eventType === 'game_ended') {
                 setTimeout(() => {
+                    const responsePayload = JSON.stringify({
+                        type: 'response.create'
+                    });
                     this.sendDataChannelMessage(responsePayload);
                 }, 500);
             }
@@ -1808,68 +1718,25 @@ class OpenAIVoiceAssistant {
             return;
         }
         
-        console.log('Updating session with VR Pong game instructions');
-        
-        // Include current game state in the instructions
-        const currentScore = this.gameInProgress 
-            ? `${this.playerScore}-${this.aiScore}` 
-            : 'No game';
-        
-        // Determine if player is winning, losing or tied
-        let gameStatus = '';
-        if (this.gameInProgress) {
-            if (this.playerScore > this.aiScore) {
-                gameStatus = 'Player is winning';
-            } else if (this.playerScore < this.aiScore) {
-                gameStatus = 'AI is winning';
-            } else {
-                gameStatus = 'Game is tied';
-            }
-        } else {
-            gameStatus = 'No game in progress';
-        }
-        
-        // Include timing information
-        const gameTimeInfo = this.gameInProgress ? `Game time elapsed: ${this.currentGameTime} seconds` : 'No game in progress';
-        const rallyInfo = this.gameInProgress ? `Current rally duration: ${this.currentRallyDuration} seconds` : 'No active rally';
-        const aiSlowdownInfo = this.aiSlowdownActive ? 'AI paddle is currently slowed down' : 'AI paddle is at normal speed';
-        
-        // Format timer display with improved detection
-        let timerInfo = 'Timer not active';
-        if (this.gameInProgress && this.gameTimerRunning && this.gameTimerValue > 0) {
-            const minutes = Math.floor(this.gameTimerValue / 60);
-            const seconds = Math.floor(this.gameTimerValue % 60);
-            const timerDisplay = `${minutes}:${seconds.toString().padStart(2, '0')}`;
-            timerInfo = `Game time remaining: ${timerDisplay}`;
-        }
+        console.log('Updating session with simplified VR Pong instructions');
         
         const instructions = `
-You are an enthusiastic AI voice assistant integrated into a Virtual Reality Pong game. Your role is to provide real-time commentary, tips, and make the game more engaging.
+You are an AI voice assistant integrated into a Virtual Reality Pong game.
 
-Current Game State:
-- Game Active: ${this.gameInProgress ? 'Yes' : 'No'}
-- Current Score: ${currentScore} 
-- Status: ${gameStatus}
-- ${timerInfo}
-- ${gameTimeInfo}
-- ${rallyInfo}
-- ${aiSlowdownInfo}
+IMPORTANT: You will receive minimal game state updates (only game start, game end, and key menu selections).
+You should respond naturally to these updates with brief, encouraging comments.
 
-Be conversational and energetic in your responses, like a sports commentator. Keep responses brief (1-2 sentences) so they don't interrupt gameplay.
+Your main tasks:
+1. Acknowledge when a game starts with brief encouragement
+2. Congratulate or console the player when a game ends based on the result
+3. Acknowledge when player selects difficulty levels or game modes
+4. Respond to any direct questions from the player
 
-Your capabilities in this VR Pong game:
-1. Provide real-time commentary on game events (rallies, scores, near misses)
-2. Offer strategic tips when appropriate
-3. Comment on the AI's occasional slowdowns when they happen
-4. Make remarks about long rallies and their duration
-5. Announce important time remaining milestones (1 minute left, 30 seconds, etc.)
-6. Add humor and personality to make the game more fun
-
-Do not mention anything about being an AI language model, focus only on your role as a game commentator.
+Keep your responses concise and focused on the game.
 `;
         
         try {
-            // Format system message for session update
+            // Format system message
             const payload = JSON.stringify({
                 type: 'conversation.item.create',
                 item: {
@@ -1884,7 +1751,9 @@ Do not mention anything about being an AI language model, focus only on your rol
             
             // Send the instructions
             this.sendDataChannelMessage(payload);
+            this.updateStatus('Session instructions updated - minimal game updates enabled');
             console.log('Session instructions updated successfully');
+            
         } catch (error) {
             console.error('Error updating session instructions:', error);
         }
@@ -2346,22 +2215,12 @@ Do not mention anything about being an AI language model, focus only on your rol
         // Wait a bit to ensure separation between game sessions
         setTimeout(() => {
             try {
-                // Send a reset message to the assistant
+                // Send a simplified reset message to the assistant
                 const resetInstructions = 
-                `GAME RESET: A new Pong match is about to begin.
-
-                IMPORTANT INSTRUCTIONS:
-                1. The score is now 0-0, forget previous game details.
-                2. Maintain your enthusiastic personality as a VR Pong commentator and coach.
-                3. Focus on major events like scoring, game start/end, and significant timer milestones.
-                4. When you receive score updates, acknowledge the CURRENT ACCURATE SCORE.
-                5. The game officially begins when you receive a "game_started" event.
-                6. The game is ONLY over when you receive a "GAME OVER" message.
-                7. NEVER assume the game is over based on score, only when explicitly told.
-                8. Messages with "[GAME IN PROGRESS]" indicate the game is still ongoing.
-                9. Messages with timer remaining indicate the game is still in progress.
+                `GAME RESET: Testing has been reset. You are an AI assistant helping with a VR Pong game.
                 
-                You'll receive score and timer updates shortly. Prepare for an exciting new match!`;
+                [IMPORTANT]: Game state updates are temporarily disabled for testing purposes.
+                If asked about game state, please respond that you don't have any game information at this time.`;
                 
                 // Format message according to OpenAI's WebRTC API requirements
                 const payload = JSON.stringify({
@@ -2381,13 +2240,75 @@ Do not mention anything about being an AI language model, focus only on your rol
                 console.log('Reset instructions sent to assistant');
                 
                 // Let the user know the assistant has been reset
-                this.updateStatus('Assistant reset and ready for new game');
-                this.addMessage('system', 'Assistant has been reset for a new game');
+                this.updateStatus('Assistant reset - game updates disabled');
+                this.addMessage('system', 'Assistant has been reset - game updates disabled');
                 
             } catch (error) {
                 console.error('Error resetting assistant state:', error);
             }
         }, 1500); // Wait 1.5 seconds to ensure proper separation
+    }
+    
+    /**
+     * This method should be called directly from game button handlers
+     * to accurately report button presses
+     */
+    reportMenuButtonPress(buttonName) {
+        if (!this.connected || !this.dataChannel || this.dataChannel.readyState !== 'open') {
+            return;
+        }
+        
+        console.log(`Menu button actually pressed: ${buttonName}`);
+        
+        // Only process specific key menu choices
+        let updateMessage = '';
+        
+        switch (buttonName.toLowerCase()) {
+            case 'start':
+                updateMessage = 'Player navigated to main menu';
+                break;
+            case 'singleplayer':
+                updateMessage = 'Player selected single player mode';
+                break;
+            case 'easy':
+                updateMessage = 'Player selected easy difficulty';
+                break;
+            case 'medium':
+                updateMessage = 'Player selected medium difficulty';
+                break;
+            case 'hard':
+            case 'expert':
+                updateMessage = 'Player selected expert difficulty';
+                break;
+            default:
+                // Skip other menu buttons to keep messages minimal
+                return;
+        }
+        
+        if (updateMessage) {
+            // Format message according to OpenAI's WebRTC API requirements
+            const payload = JSON.stringify({
+                type: 'conversation.item.create',
+                item: {
+                    type: 'message',
+                    role: 'system',
+                    content: [{
+                        type: 'input_text', // System messages must use 'input_text' type
+                        text: updateMessage
+                    }]
+                }
+            });
+            
+            // Send the update
+            this.sendDataChannelMessage(payload);
+        }
+    }
+    
+    // We'll rename this method to make it clearer that it's not used directly
+    // but is exposed for game components to call
+    sendMenuNavigationUpdate(buttonName) {
+        // Call our new method directly - keeping this for backward compatibility
+        this.reportMenuButtonPress(buttonName);
     }
 }
 
