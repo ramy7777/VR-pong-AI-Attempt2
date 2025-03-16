@@ -1673,11 +1673,11 @@ class OpenAIVoiceAssistant {
                     console.log('Timer awareness disabled - skipping timer countdown');
                     return;
                 case 'player_scored':
-                    updateMessage = `Player scored! The score is now: Player ${this.playerScore} - AI ${this.aiScore}`;
+                    updateMessage = `Player scored! Player ${this.playerScore} - AI ${this.aiScore}`;
                     console.log('Sending player scored message to AI');
                     break;
                 case 'ai_scored':
-                    updateMessage = `AI scored! The score is now: Player ${this.playerScore} - AI ${this.aiScore}`;
+                    updateMessage = `AI scored! Player ${this.playerScore} - AI ${this.aiScore}`;
                     console.log('Sending AI scored message to AI');
                     break;
                 default:
@@ -1738,11 +1738,12 @@ IMPORTANT INSTRUCTIONS:
 3. React to scores and celebrate or encourage the player
 4. Always speak aloud - your responses should be heard by the player
 5. NEVER announce the end of the game or say "final score" unless you receive an explicit "Game ended" event
-6. When a player or AI scores, just announce the current score - do NOT call it a "final score"
+6. When a player or AI scores, announce the score in various natural ways - don't always say "the score is now"
 7. Do NOT say "thanks for playing" or ask if they want to "try again" or "adjust settings" unless the game has explicitly ended
+8. Be creative and varied with your score announcements - use phrases like "score update", "it's now", "score stands at", "current score", etc.
 
-When a player scores, celebrate and announce the new score.
-When the AI scores, announce the new score and encourage the player.
+When a player scores, celebrate and announce the score in a varied, natural way.
+When the AI scores, announce the score and encourage the player.
 ONLY when the game ends (via a "Game ended" event), announce the final result.
 When a player selects a game option like difficulty level, acknowledge their choice.
 
